@@ -235,32 +235,80 @@ def registrar_siniestro(
     )
 
 
-def consultar_siniestros_previos(limite: int = 5) -> str:
-    """Devuelve los siniestros previos registrados con su dictamen.
+# Aviso que encabeza los precedentes cuando hubo que ampliar la busqueda.
+AVISO_PRECEDENTES_AMPLIADOS = (
+    "(Sin precedentes del mismo tipo/producto; se listan los mas recientes.)"
+)
 
-    Se usan como precedentes para fundamentar un nuevo dictamen (la fuente
-    de "resoluciones previas similares" del alcance del TP).
+# Consulta base de precedentes. Las condiciones extra se agregan con AND.
+_SQL_PRECEDENTES = """
+    SELECT s.tipo_siniestro, s.dictamen_ia, s.estado_reclamo, p.producto
+    FROM siniestros s
+    JOIN polizas p ON s.numero_poliza = p.numero_poliza
+    WHERE s.dictamen_ia IS NOT NULL
+"""
+_ORDEN_PRECEDENTES = " ORDER BY s.id_siniestro DESC LIMIT ?"
+
+
+def consultar_siniestros_previos(
+    limite: int = 5,
+    tipo_siniestro: str = "",
+    patente: str = "",
+) -> str:
+    """Devuelve siniestros previos con su dictamen, para usarlos como precedentes.
+
+    Filtros OPCIONALES (ambos vacios = comportamiento historico, los ultimos N):
+
+    - ``tipo_siniestro``: coincidencia parcial por tipo (granizo, robo, choque).
+    - ``patente``: restringe a polizas del MISMO producto que el de esa patente.
+      Es lo que hace comparable a un precedente: no sirve citar la resolucion de
+      un Todo Riesgo para dictaminar un Terceros Completos.
+
+    Si el filtro no devuelve nada se cae al listado sin filtrar (encabezado con
+    ``AVISO_PRECEDENTES_AMPLIADOS``), para que el dictamen nunca se quede sin
+    referencias.
     """
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT s.tipo_siniestro, s.dictamen_ia, s.estado_reclamo, p.producto
-        FROM siniestros s
-        JOIN polizas p ON s.numero_poliza = p.numero_poliza
-        WHERE s.dictamen_ia IS NOT NULL
-        ORDER BY s.id_siniestro DESC
-        LIMIT ?
-        """,
-        (limite,),
-    )
-    rows = cur.fetchall()
+
+    condiciones: list[str] = []
+    valores: list[str] = []
+
+    if tipo_siniestro.strip():
+        condiciones.append("LOWER(s.tipo_siniestro) LIKE ?")
+        valores.append(f"%{tipo_siniestro.strip().lower()}%")
+
+    if patente.strip():
+        fila = cur.execute(
+            "SELECT producto FROM polizas WHERE patente = ?",
+            (patente.strip().upper(),),
+        ).fetchone()
+        if fila:
+            condiciones.append("p.producto = ?")
+            valores.append(fila["producto"])
+
+    rows = []
+    hubo_filtro = bool(condiciones)
+    if hubo_filtro:
+        sql = _SQL_PRECEDENTES + " AND " + " AND ".join(condiciones) + _ORDEN_PRECEDENTES
+        rows = cur.execute(sql, (*valores, limite)).fetchall()
+
+    # Fallback: si no hubo filtro, o si el filtro no encontro nada.
+    ampliado = False
+    if not rows:
+        ampliado = hubo_filtro
+        rows = cur.execute(
+            _SQL_PRECEDENTES + _ORDEN_PRECEDENTES, (limite,)
+        ).fetchall()
+
     conn.close()
 
     if not rows:
         return "No hay siniestros previos registrados para usar como precedentes."
 
     partes = []
+    if ampliado:
+        partes.append(AVISO_PRECEDENTES_AMPLIADOS)
     for r in rows:
         partes.append(
             f"- {r['tipo_siniestro']} | Producto {r['producto']} | "

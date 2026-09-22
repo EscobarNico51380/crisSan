@@ -57,12 +57,20 @@ def registrar_siniestro(
 
 
 @tool
-def consultar_siniestros_previos(limite: int = 5) -> str:
+def consultar_siniestros_previos(
+    limite: int = 5,
+    tipo_siniestro: str = "",
+    patente: str = "",
+) -> str:
     """Consulta los siniestros previos registrados con sus dictámenes.
 
     Se usan como precedentes para fundamentar un nuevo dictamen.
+
+    Parámetros opcionales para acotarlos a casos comparables:
+    - tipo_siniestro: filtra por tipo (granizo, robo, choque...).
+    - patente: restringe a pólizas del mismo producto que el de esa patente.
     """
-    return database.consultar_siniestros_previos(limite)
+    return database.consultar_siniestros_previos(limite, tipo_siniestro, patente)
 
 
 @tool

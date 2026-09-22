@@ -359,7 +359,13 @@ def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
 
 def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     mensaje = state["messages"][-1].content
-    precedentes = consultar_siniestros_previos.invoke({"limite": 5})
+    # Acotamos los precedentes al MISMO producto que la póliza en cuestión: una
+    # resolución sobre un Todo Riesgo no es comparable con una de Terceros
+    # Completos. No filtramos por tipo_siniestro porque todavía no se conoce
+    # (lo determina el LLM más abajo, en esta misma función).
+    precedentes = consultar_siniestros_previos.invoke(
+        {"limite": 5, "patente": state.get("patente", "")}
+    )
     contexto = (
         f"--- DATOS DE LA PÓLIZA ---\n{state['datos_poliza']}\n\n"
         f"--- CLÁUSULAS DEL MANUAL ---\n{state['clausulas']}\n\n"
