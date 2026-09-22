@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage
 
 from config import GROQ_API_KEY, LLM_MODEL
 
-st.set_page_config(page_title="San Cris", page_icon=":car:", layout="centered")
+st.set_page_config(page_title="San Cris", page_icon="🚗", layout="centered")
 
 
 @st.cache_resource
