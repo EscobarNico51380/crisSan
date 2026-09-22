@@ -1,0 +1,533 @@
+"""Agente conversacional basado en un grafo de estado de LangGraph.
+
+El flujo está controlado de forma EXPLÍCITA (no es un ReAct a ciegas):
+
+    START
+      -> clasificar (LLM: intención + patente)
+            |-- "charla"  -> responder -> END
+            |-- "general" -> consultar_clausulas -> responder -> END
+            |-- "consulta"/"siniestro" sin patente -> pedir_patente -> END
+            |-- "consulta"  -> consultar_poliza -> consultar_clausulas
+                                   -> responder -> END
+            |-- "siniestro" -> consultar_poliza -> consultar_clausulas
+                                   -> emitir_dictamen -> registrar
+                                   -> responder -> END
+
+La memoria conversacional se logra con el checkpointer (MemorySaver) y un
+thread_id por sesión: el historial vive en el estado ``messages``.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from typing import Annotated, Literal, Optional, TypedDict
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AnyMessage
+from langchain_groq import ChatGroq
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from pydantic import BaseModel, Field
+
+from config import LLM_MODEL
+from tools import (
+    consultar_clausulas_poliza,
+    consultar_datos_poliza,
+    consultar_estado_reclamo,
+    consultar_polizas_por_dni,
+    consultar_siniestros_previos,
+    registrar_siniestro,
+)
+
+# ---------------------------------------------------------------------------
+# Modelo de lenguaje
+# ---------------------------------------------------------------------------
+llm = ChatGroq(model=LLM_MODEL, temperature=0)
+
+# Patente argentina: formato Mercosur (AB123CD) o formato viejo (ABC123).
+# Toleramos separadores opcionales: "AB 123 CD", "AB-123-CD" o "AB123CD".
+PATRON_PATENTE = re.compile(
+    r"\b[A-Za-z]{2}[\s-]?\d{3}[\s-]?[A-Za-z]{2}\b|\b[A-Za-z]{3}[\s-]?\d{3}\b"
+)
+
+# DNI argentino: 8 dígitos, con o sin puntos (39.123.456 o 39123456).
+PATRON_DNI = re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}\b")
+
+# Número de reclamo: "reclamo #8", "reclamo 8", "claim 8", "número 8".
+PATRON_RECLAMO = re.compile(r"(?:reclamo|claim|n[úu]mero)\s*#?\s*(\d+)", re.IGNORECASE)
+
+
+def extraer_patente(texto: str) -> str | None:
+    """Extrae una patente argentina del texto de forma determinística.
+
+    No depende del LLM, así que es robusta ante inputs ambiguos (ej. que el
+    usuario escriba solo "AB123CD").
+    """
+    coincidencia = PATRON_PATENTE.search(texto)
+    if coincidencia:
+        # Normalizamos quitando espacios y guiones ("AB 123 CD" -> "AB123CD").
+        return re.sub(r"[^A-Za-z0-9]", "", coincidencia.group(0)).upper()
+    return None
+
+
+def extraer_dni(texto: str) -> str | None:
+    """Extrae un DNI argentino (8 dígitos) del texto de forma determinística."""
+    coincidencia = PATRON_DNI.search(texto)
+    if coincidencia:
+        # Normalizamos quitando los puntos (39.123.456 -> 39123456).
+        return coincidencia.group(0).replace(".", "")
+    return None
+
+
+def extraer_reclamo(texto: str) -> str | None:
+    """Extrae un número de reclamo del texto ("reclamo #8", "reclamo 8")."""
+    coincidencia = PATRON_RECLAMO.search(texto)
+    if coincidencia:
+        return coincidencia.group(1)
+    return None
+
+
+def extraer_texto(content) -> str:
+    """Extrae texto plano de un contenido de mensaje.
+
+    Algunos proveedores devuelven el contenido como una lista de bloques
+    en lugar de un string. Este helper lo normaliza a str de forma defensiva
+    (si ya es string, lo devuelve tal cual).
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        partes = []
+        for bloque in content:
+            if isinstance(bloque, str):
+                partes.append(bloque)
+            elif isinstance(bloque, dict):
+                texto = bloque.get("text") or bloque.get("content")
+                if isinstance(texto, str) and texto:
+                    partes.append(texto)
+            else:
+                texto = getattr(bloque, "text", None) or getattr(
+                    bloque, "content", None
+                )
+                if isinstance(texto, str) and texto:
+                    partes.append(texto)
+        return "\n".join(partes).strip()
+    return str(content)
+
+
+def invocar_con_reintentos(func, *args, **kwargs):
+    """Reintenta llamadas al LLM ante errores transitorios (429/503).
+
+    Tanto la API gratuita de Gemini como la de Groq pueden responder
+    temporalmente 429 (rate limit) o 503 (alta demanda). Hacemos backoff
+    exponencial y reintentamos hasta ``intentos`` veces.
+    """
+    intentos = kwargs.pop("_intentos", 5)
+    ultimo_error = None
+    for i in range(intentos):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            ultimo_error = e
+            mensaje = str(e)
+            # El límite diario de tokens (TPD) no se resuelve con reintentos.
+            if "tokens per day" in mensaje or "TPD" in mensaje:
+                raise
+            es_transitorio = any(
+                token in mensaje
+                for token in (
+                    "503",
+                    "429",
+                    "UNAVAILABLE",
+                    "RESOURCE_EXHAUSTED",
+                    "high demand",
+                    "rate limit",
+                    "Rate limit",
+                )
+            )
+            if es_transitorio and i < intentos - 1:
+                time.sleep(2**i)  # 1s, 2s, 4s, 8s...
+                continue
+            raise
+    raise ultimo_error
+
+
+# ---------------------------------------------------------------------------
+# Estado del grafo
+# ---------------------------------------------------------------------------
+class EstadoAgente(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]  # historial
+    intencion: str  # consulta | siniestro | general | charla
+    patente: str  # patente extraída (persistente entre turnos)
+    dni: str  # DNI del titular (si lo menciona)
+    reclamo: str  # número de reclamo (persistente entre turnos)
+    datos_poliza: str  # resultado de consultar_datos_poliza
+    clausulas: str  # resultado del RAG
+    dictamen: dict  # dictamen estructurado del siniestro
+    siniestro_registrado: str  # resultado del registro del siniestro
+    reclamo_resultado: str  # resultado de consultar_estado_reclamo
+
+
+# ---------------------------------------------------------------------------
+# Schemas de salida estructurada
+# ---------------------------------------------------------------------------
+class AnalisisEntrada(BaseModel):
+    """Clasificación de la intención del usuario + datos extraídos."""
+
+    intencion: Literal["consulta", "siniestro", "general", "charla"] = Field(
+        description=(
+            "consulta: pregunta sobre SU póliza (estado, plan, franquicia, "
+            "vencimiento). siniestro: describe un accidente/robo/incendio/"
+            "granizo y quiere saber si está cubierto. general: pregunta "
+            "genérica sobre el manual/coberturas. charla: saludo o trivial."
+        )
+    )
+    patente: Optional[str] = Field(
+        default=None,
+        description="Patente argentina (3 letras + 3 números, ej AB123CD) si aparece",
+    )
+    dni: Optional[str] = Field(
+        default=None,
+        description="DNI del titular (8 dígitos) si aparece",
+    )
+
+
+class DictamenSiniestro(BaseModel):
+    """Determinación de cobertura + datos del siniestro para registrar."""
+
+    determinacion: Literal[
+        "Cubierto", "Rechazado", "Requiere peritaje", "Asistencia 24"
+    ] = Field(description="Determinación de si el seguro cubre o no el siniestro")
+    fundamento: str = Field(description="Justificación basada en póliza y cláusulas")
+    tipo_siniestro: str = Field(
+        description="Ej: Accidente, Robo Total, Granizo, Incendio"
+    )
+    fecha_ocurrencia: str = Field(
+        description="Fecha en formato YYYY-MM-DD (hoy si no se aclara)"
+    )
+    hubo_lesionados: int = Field(description="1 si hubo lesionados, 0 si no")
+
+
+# ---------------------------------------------------------------------------
+# Prompts del sistema
+# ---------------------------------------------------------------------------
+PROMPT_CLASIFICAR = (
+    "Sos el ROUTER de un sistema RAG de seguros San Cristóbal.\n"
+    "Clasificá el mensaje en UNA de estas intenciones:\n"
+    "- 'consulta': pregunta o da datos de SU póliza (patente o DNI).\n"
+    "- 'siniestro': reporta un hecho ocurrido (choque, robo, incendio, granizo, vuelco).\n"
+    "- 'general': pregunta genérica sobre el manual/coberturas, sin su póliza.\n"
+    "- 'charla': saludo, agradecimiento o texto trivial.\n"
+    "Regla: si menciona patente o DNI → 'consulta' (salvo que reporte un hecho → 'siniestro').\n"
+    "Respondé SOLO con la estructura pedida, sin texto adicional."
+)
+
+PROMPT_RESPONDER = (
+    "Sos 'San Cris', el asistente virtual de seguros San Cristóbal.\n"
+    "Reglas:\n"
+    "1. Respondé SOLO con la información provista (datos de la póliza y "
+    "cláusulas del manual). No inventes coberturas, montos, emails, "
+    "teléfonos, portales ni procedimientos.\n"
+    "2. Si no tenés la información, decilo con honestidad y pedí los datos "
+    "que falten (patente, DNI o número de reclamo).\n"
+    "3. Español rioplatense, claro y directo. Sin muletillas iniciales "
+    "('¡Claro!', '¡Hola!', '¡Por supuesto!').\n"
+    "4. Si se registró un siniestro, mencioná su número de reclamo."
+)
+
+PROMPT_DICTAMEN = (
+    "Sos el PERITO de seguros San Cristóbal. Determiná si el siniestro está "
+    "CUBIERTO o NO.\n\n"
+    "COBERTURA POR PRODUCTO:\n"
+    "- A (Auto Base): solo Responsabilidad Civil (daños a terceros). No cubre el propio auto.\n"
+    "- B (Auto Mix): daños TOTALES (robo/hurto total, incendio total, "
+    "destrucción total, vuelco, despeñamiento, inmersión). No cubre parciales.\n"
+    "- C/C+/CM (Terceros Completos): RC + robo/hurto + incendio + parciales "
+    "específicos (cristales, cerraduras, parabrisas, luneta, granizo). "
+    "No cubre parciales por colisión/choque.\n"
+    "- D (Todo Riesgo): cubre todo, incluidos parciales y totales por choque/accidente.\n\n"
+    "DECISIÓN:\n"
+    "1. Si el siniestro no está en las coberturas del producto → 'Rechazado' (fundamentá por qué).\n"
+    "2. Considerá franquicia, exclusiones y estado de pago (impago → rechazá).\n"
+    "3. Si falta un dato clave (daño total vs parcial) → 'Requiere peritaje'.\n"
+    "4. Extraé tipo de siniestro, fecha (hoy si no se aclara) y si hubo lesionados.\n\n"
+    "Básate en: la póliza, las cláusulas recuperadas y las resoluciones previas "
+    "(referencia, no regla rígida)."
+)
+
+
+# ---------------------------------------------------------------------------
+# Nodos
+# ---------------------------------------------------------------------------
+def nodo_clasificar(state: EstadoAgente) -> dict:
+    mensaje = state["messages"][-1].content
+
+    # La patente, el DNI y el reclamo se extraen con regex (determinístico).
+    patente_regex = extraer_patente(mensaje)
+    dni_regex = extraer_dni(mensaje)
+    reclamo_regex = extraer_reclamo(mensaje)
+
+    # json_schema usa el structured output nativo de Groq: fuerza el schema
+    # y evita tool calls malformados (como {"consulta": ...} en vez de
+    # {"intencion": ...}).
+    clasificador = llm.with_structured_output(AnalisisEntrada, method="json_schema")
+    try:
+        resultado: AnalisisEntrada = invocar_con_reintentos(
+            clasificador.invoke,
+            [SystemMessage(content=PROMPT_CLASIFICAR), HumanMessage(content=mensaje)],
+        )
+        intencion = resultado.intencion
+        patente = patente_regex or (resultado.patente or "")
+        dni = dni_regex or (resultado.dni or "")
+    except Exception:  # noqa: BLE001
+        # Fallback determinístico ante un fallo del LLM: si hay patente en el
+        # texto, asumimos consulta; si no, charla. Mejor que romper la app.
+        intencion = "consulta" if patente_regex else "charla"
+        patente = patente_regex or ""
+        dni = dni_regex or ""
+
+    # Normalizamos la patente (venga del regex o del LLM): quitamos
+    # espacios/guiones ("AB 123 CD" -> "AB123CD").
+    if patente:
+        patente = re.sub(r"[^A-Za-z0-9]", "", patente).upper()
+
+    # Memoria: si este mensaje no menciona una patente, conservamos la que el
+    # usuario ya dio en turnos anteriores.
+    if not patente:
+        patente = state.get("patente", "")
+
+    # Ídem con el DNI: si no se menciona uno nuevo, conservamos el último.
+    if not dni:
+        dni = state.get("dni", "")
+
+    # Ídem con el número de reclamo: si no se menciona uno nuevo, se conserva
+    # el último registrado en la conversación.
+    reclamo = reclamo_regex or state.get("reclamo", "")
+
+    # Reseteamos los campos "por turno" para que no queden datos viejos de
+    # una consulta anterior contaminando la respuesta actual.
+    return {
+        "intencion": intencion,
+        "patente": patente,
+        "dni": dni,
+        "reclamo": reclamo,
+        "datos_poliza": "",
+        "clausulas": "",
+        "dictamen": {},
+        "siniestro_registrado": "",
+        "reclamo_resultado": "",
+    }
+
+
+def nodo_pedir_patente(state: EstadoAgente) -> dict:
+    texto = (
+        "Para poder ayudarte necesito la patente del vehículo asegurado "
+        "(por ejemplo, AB123CD). ¿Me la pasás?"
+    )
+    return {"messages": [AIMessage(content=texto)]}
+
+
+def nodo_listar_polizas(state: EstadoAgente) -> dict:
+    dni = state["dni"]
+    resultado = consultar_polizas_por_dni.invoke({"dni": dni})
+    mensaje = (
+        f"Encontré estas pólizas asociadas a tu DNI:\n\n{resultado}\n\n"
+        f"¿Sobre cuál patente querés que consultemos?"
+    )
+    return {"messages": [AIMessage(content=mensaje)]}
+
+
+def nodo_consultar_reclamo(state: EstadoAgente) -> dict:
+    reclamo = state["reclamo"]
+    resultado = consultar_estado_reclamo.invoke({"numero_reclamo": reclamo})
+    return {"reclamo_resultado": resultado}
+
+
+def nodo_consultar_poliza(state: EstadoAgente) -> dict:
+    patente = state["patente"]
+    resultado = consultar_datos_poliza.invoke({"patente": patente})
+    return {"datos_poliza": resultado}
+
+
+def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
+    mensaje = state["messages"][-1].content
+    resultado = consultar_clausulas_poliza.invoke({"consulta": mensaje})
+    return {"clausulas": resultado}
+
+
+def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
+    mensaje = state["messages"][-1].content
+    precedentes = consultar_siniestros_previos.invoke({"limite": 5})
+    contexto = (
+        f"--- DATOS DE LA PÓLIZA ---\n{state['datos_poliza']}\n\n"
+        f"--- CLÁUSULAS DEL MANUAL ---\n{state['clausulas']}\n\n"
+        f"--- RESOLUCIONES PREVIAS (precedentes) ---\n{precedentes}\n\n"
+        f"--- RELATO DEL USUARIO ---\n{mensaje}"
+    )
+    dictaminador = llm.with_structured_output(DictamenSiniestro, method="json_schema")
+    resultado: DictamenSiniestro = invocar_con_reintentos(
+        dictaminador.invoke,
+        [SystemMessage(content=PROMPT_DICTAMEN), HumanMessage(content=contexto)],
+    )
+    return {
+        "dictamen": {
+            "determinacion": resultado.determinacion,
+            "fundamento": resultado.fundamento,
+            "tipo_siniestro": resultado.tipo_siniestro,
+            "fecha_ocurrencia": resultado.fecha_ocurrencia,
+            "hubo_lesionados": resultado.hubo_lesionados,
+        }
+    }
+
+
+def nodo_registrar(state: EstadoAgente) -> dict:
+    dictamen = state["dictamen"]
+    descripcion = state["messages"][-1].content  # relato original del usuario
+    resultado = registrar_siniestro.invoke(
+        {
+            "patente": state["patente"],
+            "tipo_siniestro": dictamen["tipo_siniestro"],
+            "fecha_ocurrencia": dictamen["fecha_ocurrencia"],
+            "hubo_lesionados": dictamen["hubo_lesionados"],
+            "descripcion": descripcion,
+            "dictamen": dictamen["determinacion"],
+        }
+    )
+    # Guardamos el número de reclamo para poder consultarlo en turnos siguientes.
+    m = re.search(r"#(\d+)", resultado)
+    reclamo = m.group(1) if m else ""
+    return {"siniestro_registrado": resultado, "reclamo": reclamo}
+
+
+def nodo_responder(state: EstadoAgente) -> dict:
+    contexto = []
+    if state.get("datos_poliza"):
+        contexto.append(f"[Datos de la póliza]\n{state['datos_poliza']}")
+    if state.get("clausulas"):
+        contexto.append(f"[Cláusulas del manual]\n{state['clausulas']}")
+    if state.get("dictamen"):
+        d = state["dictamen"]
+        contexto.append(
+            f"[Dictamen]\nDeterminación: {d['determinacion']}\n"
+            f"Fundamento: {d['fundamento']}"
+        )
+    if state.get("siniestro_registrado"):
+        contexto.append(f"[Registro]\n{state['siniestro_registrado']}")
+    if state.get("reclamo_resultado"):
+        contexto.append(f"[Estado del reclamo]\n{state['reclamo_resultado']}")
+
+    mensajes = [SystemMessage(content=PROMPT_RESPONDER)]
+    if contexto:
+        mensajes.append(SystemMessage(content="\n\n".join(contexto)))
+    else:
+        # Sin contexto: prohibimos inventar información.
+        mensajes.append(
+            SystemMessage(
+                content=(
+                    "ATENCIÓN: no tenés información de contexto para responder "
+                    "esta consulta. NO inventes portales, apps, emails, "
+                    "teléfonos ni procedimientos. Respondé honestamente que no "
+                    "podés responder eso con la información disponible y pedí "
+                    "los datos que te permitan buscarlo (patente, DNI o número "
+                    "de reclamo)."
+                )
+            )
+        )
+    mensajes.extend(state["messages"])
+
+    respuesta = invocar_con_reintentos(llm.invoke, mensajes)
+    texto = extraer_texto(respuesta.content).strip()
+    if not texto:
+        # Fallback defensivo: el modelo puede devolver vacío por flakiness o
+        # rate limits. Nunca devolvemos una respuesta vacía al usuario.
+        texto = (
+            "Disculpá, no pude armar una respuesta en este momento. "
+            "¿Podrías reformular tu consulta?"
+        )
+    return {"messages": [AIMessage(content=texto)]}
+
+
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
+def rutear_desde_clasificar(state: EstadoAgente) -> str:
+    intencion = state["intencion"]
+    mensaje = state["messages"][-1].content.lower()
+
+    # Señales EXPLÍCITAS del mensaje actual (determinísticas, máxima prioridad).
+    if ("reclamo" in mensaje or "claim" in mensaje) and state.get("reclamo"):
+        return "consultar_reclamo"
+    if extraer_dni(mensaje) and not extraer_patente(mensaje):
+        return "listar_polizas"
+    if extraer_patente(mensaje):
+        return "consultar_poliza"
+
+    # Intención del LLM (con valores persistidos como respaldo).
+    if intencion == "charla":
+        return "responder"
+    if intencion == "general":
+        return "consultar_clausulas"
+    if state.get("patente"):
+        # consulta/siniestro con patente (actual o recordada en la conversación).
+        return "consultar_poliza"
+    if intencion == "consulta" and state.get("dni"):
+        return "listar_polizas"
+    return "pedir_patente"
+
+
+def rutear_desde_consultar_poliza(state: EstadoAgente) -> str:
+    return "consultar_clausulas"
+
+
+def rutear_desde_clausulas(state: EstadoAgente) -> str:
+    return "emitir_dictamen" if state["intencion"] == "siniestro" else "responder"
+
+
+# ---------------------------------------------------------------------------
+# Construcción del grafo
+# ---------------------------------------------------------------------------
+def construir_agente():
+    grafo = StateGraph(EstadoAgente)
+
+    grafo.add_node("clasificar", nodo_clasificar)
+    grafo.add_node("pedir_patente", nodo_pedir_patente)
+    grafo.add_node("listar_polizas", nodo_listar_polizas)
+    grafo.add_node("consultar_reclamo", nodo_consultar_reclamo)
+    grafo.add_node("consultar_poliza", nodo_consultar_poliza)
+    grafo.add_node("consultar_clausulas", nodo_consultar_clausulas)
+    grafo.add_node("emitir_dictamen", nodo_emitir_dictamen)
+    grafo.add_node("registrar", nodo_registrar)
+    grafo.add_node("responder", nodo_responder)
+
+    grafo.add_edge(START, "clasificar")
+    grafo.add_conditional_edges(
+        "clasificar",
+        rutear_desde_clasificar,
+        {
+            "responder": "responder",
+            "consultar_clausulas": "consultar_clausulas",
+            "pedir_patente": "pedir_patente",
+            "listar_polizas": "listar_polizas",
+            "consultar_reclamo": "consultar_reclamo",
+            "consultar_poliza": "consultar_poliza",
+        },
+    )
+    grafo.add_edge("pedir_patente", END)
+    grafo.add_edge("listar_polizas", END)
+    grafo.add_edge("consultar_reclamo", "responder")
+    grafo.add_edge("consultar_poliza", "consultar_clausulas")
+    grafo.add_conditional_edges(
+        "consultar_clausulas",
+        rutear_desde_clausulas,
+        {"emitir_dictamen": "emitir_dictamen", "responder": "responder"},
+    )
+    grafo.add_edge("emitir_dictamen", "registrar")
+    grafo.add_edge("registrar", "responder")
+    grafo.add_edge("responder", END)
+
+    return grafo.compile(checkpointer=MemorySaver())
+
+
+agente = construir_agente()
