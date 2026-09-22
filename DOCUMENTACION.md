@@ -212,6 +212,9 @@ turno" (dictamen, cláusulas, etc.) se resetean en `clasificar`.
 | 17 | Clasificador impreciso ("datos de la patente" → general) | Prompt de clasificación vago | Prompt con definiciones + ejemplos |
 | 18 | Siniestros rechazados quedaban "Iniciado" | `estado_reclamo` hardcodeado | Estado según dictamen (`ESTADO_POR_DICTAMEN`) |
 | 19 | `dni` no se preservaba entre turnos | Faltaba preservarlo como patente/reclamo | Preservar dni del estado anterior |
+| 20 | Streamlit no abría: `OSError [WinError 123]` en bucle | Streamlit 1.64 dejó de interpretar el shortcode `page_icon=":car:"` y lo buscaba como archivo estático; `:` es inválido en nombres de archivo en Windows | Emoji literal `"🚗"` |
+| 21 | El entorno no era reproducible | `requirements.txt` sin versiones fijadas: `pip install` trae lo último de cada día (así se coló el bug 20) | `requirements-lock.txt` con las 139 versiones probadas |
+| 22 | Exclusión por GNC aplicada fuera de su alcance | El chunking partía por ítems numerados y cada ítem quedaba **sin el encabezado que le da ámbito**. El chunk recuperado decía sólo "5) Cuando el vehículo haya sido adaptado para GNC", sin indicar que pertenece a *Exclusiones para Robo o Hurto* | Propagar el encabezado de lista a cada ítem (numerado y con viñetas) al indexar |
 
 ---
 
@@ -252,5 +255,76 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 
 - La tabla de límites (pág 5) a veces rankea alto (falso positivo menor).
 - El modelado de GNC no distingue "declarado vs no declarado".
-- Interpretación de imágenes (multimodal) — pendiente del alcance original.
-- Migración a Google Colab para la entrega en notebook.
+- **Interpretación de imágenes (multimodal)** — pendiente del alcance original.
+  Verificado: `openai/gpt-oss-*` **no** acepta imágenes; `qwen/qwen3.8-27b` sí,
+  y está disponible en el free tier. Costo medido: 1.300–1.800 tokens por
+  imagen sobre un cupo de 200.000 diarios (~40-50 dictámenes con foto por día).
+- **La consulta al RAG no incorpora los atributos del vehículo** (ver §14).
+
+---
+
+## 14. Estado del bug del GNC y próximo paso
+
+> Sección de traspaso: acá está lo que quedó a medio camino, con el diagnóstico
+> hecho para que quien siga no tenga que repetirlo.
+
+### Qué se arregló
+
+El chunking ahora propaga a cada ítem el encabezado de la lista que lo gobierna,
+tanto para listas numeradas (`N)`) como con viñetas (`•`). El manual tiene
+**tres** listas distintas que excluyen vehículos con GNC:
+
+| Página | Alcance de la exclusión |
+|---|---|
+| 10 | General — *"excepto que la cobertura incluya alguno de los puntos enumerados"* |
+| 15 | Sólo **Incendio** |
+| 16 | Sólo **Robo o Hurto** |
+
+Antes, los tres chunks llegaban al LLM sin ese encabezado y la exclusión se leía
+como absoluta.
+
+**Resultado medido** (batería de 6 casos cruzando tipo de siniestro × GNC):
+
+| Caso | Antes del fix | Después |
+|---|---|---|
+| Granizo / vehículo con GNC | Rechazado (falso negativo) | **Requiere peritaje** |
+| Robo / vehículo con GNC | Cubierto (falso positivo) | Cubierto — *sin cambios* |
+| Los otros 4 casos | correctos | correctos |
+
+La exclusión por GNC dejó de invocarse espuriamente en los 6 casos. El de
+granizo pasó de un rechazo liso a "requiere peritaje", que es defendible: el
+manual **es ambiguo** ahí, porque la lista general de pág. 10 incluye GNC pero
+con la salvedad del "excepto".
+
+### Qué queda sin resolver
+
+El **falso positivo del robo**: el sistema cubre un robo sobre un vehículo con
+GNC, que las listas de pág. 10 y pág. 16 excluyen.
+
+**Causa raíz identificada:** no es un problema de razonamiento sino de
+**recuperación**. Para la consulta *"Me robaron el auto AF987XX"* ninguno de los
+12 chunks recuperados contiene la exclusión por GNC, así que el LLM nunca la ve.
+
+El motivo está en `nodo_consultar_clausulas` (`agent.py`): la búsqueda usa
+**sólo el texto del usuario**, que no menciona el GNC. El dato "este vehículo
+tiene GNC" existe en SQL (`vehiculos.tiene_gnc`) pero nunca entra a la consulta.
+
+### Próximo paso sugerido
+
+Enriquecer la consulta al RAG con los atributos de la póliza antes de buscar:
+
+```python
+def nodo_consultar_clausulas(state):
+    mensaje = state["messages"][-1].content
+    # Sumar a la consulta los atributos que disparan exclusiones (GNC, uso,
+    # producto), para que se recuperen las cláusulas que dependen de ellos y
+    # no sólo las que el usuario nombró.
+    consulta = f"{mensaje} {atributos_relevantes(state['datos_poliza'])}"
+    ...
+```
+
+Alternativa complementaria: una segunda búsqueda dedicada a exclusiones, cuyos
+resultados se agreguen al contexto del dictamen.
+
+Cómo verificar el arreglo: correr la batería de 6 casos y confirmar que
+*robo + GNC* pasa a **Rechazado** sin que se rompan los otros cinco.
