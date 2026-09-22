@@ -56,6 +56,72 @@ def pagina_a_seccion(pagina: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Encabezados de las listas numeradas
+# ---------------------------------------------------------------------------
+# El manual encadena varias listas por página ("Exclusiones a la cobertura para
+# Incendio", "...para Robo o Hurto", etc). Al partir por ítems numerados, cada
+# ítem quedaba SIN su encabezado, y una exclusión acotada a una cobertura se
+# leía como general: el ítem "Cuando el vehículo haya sido adaptado para GNC"
+# (que sólo excluye incendio y robo) hacía rechazar siniestros de granizo.
+TITULO_MIN = 12
+TITULO_MAX = 160
+
+
+def _parece_titulo(linea: str) -> bool:
+    """Indica si una línea encabeza una lista numerada."""
+    linea = linea.strip()
+    if not (TITULO_MIN <= len(linea) <= TITULO_MAX):
+        return False
+    if re.match(r"\d+\)", linea):  # es un ítem, no un encabezado
+        return False
+    if re.fullmatch(r"p[aáà]g\.?\s*\d+", linea, re.I):  # número de página
+        return False
+    # Un encabezado o bien cierra con ":" (frase introductoria) o bien no lleva
+    # punto final (título de sección).
+    return linea.endswith(":") or not linea.endswith(".")
+
+
+def _titulo_de_lista(bloque: str, maximo: int = 2) -> str:
+    """Devuelve el encabezado de lista que aparece al FINAL de un bloque.
+
+    Cuando una página encadena listas, el título de la siguiente queda pegado
+    al final del bloque anterior. Tomamos hasta ``maximo`` renglones para
+    capturar el título de sección y su frase introductoria.
+    """
+    elegidas: list[str] = []
+    for linea in reversed(bloque.splitlines()):
+        if not linea.strip():
+            if elegidas:
+                break
+            continue
+        if not _parece_titulo(linea):
+            break
+        elegidas.append(linea.strip())
+        if len(elegidas) >= maximo:
+            break
+    return " — ".join(reversed(elegidas))
+
+
+def _intro_de_vinetas(bloque: str, maximo: int = 3) -> str:
+    """Devuelve el encabezado que introduce una lista con viñetas ("•").
+
+    Son los renglones inmediatamente anteriores a la primera viñeta. Ahí vive
+    la salvedad de la lista general de exclusiones ("excepto que la cobertura
+    incluya alguno de los puntos enumerados"): sin ella el LLM lee esas
+    exclusiones como absolutas y, por ejemplo, rechaza un granizo porque el
+    auto tiene GNC.
+    """
+    lineas = bloque.splitlines()
+    primera = next(
+        (i for i, l in enumerate(lineas) if l.strip().startswith("•")), None
+    )
+    if primera is None:
+        return ""
+    previas = [l.strip() for l in lineas[:primera] if l.strip()]
+    return " ".join(previas[-maximo:])[:400]
+
+
+# ---------------------------------------------------------------------------
 # Construcción / carga de la base vectorial
 # ---------------------------------------------------------------------------
 _vector_store: Chroma | None = None
@@ -128,20 +194,53 @@ def construir_vector_store(forzar: bool = False) -> Chroma:
         add_start_index=True,
     )
     chunks = []
+    # Encabezado de lista vigente. Se arrastra ENTRE páginas a propósito: el
+    # manual continúa una misma lista numerada de una hoja a la siguiente.
+    titulo_vigente = ""
     for doc in documentos:
         partes = re.split(r"(?=^\d+\))", doc.page_content, flags=re.MULTILINE)
-        for parte in partes:
+        for i, parte in enumerate(partes):
             parte = parte.strip()
             if not parte:
                 continue
-            if len(parte) > CHUNK_SIZE:
-                # Ítems muy largos: los sub-dividimos por caracteres.
+
+            # Los ítems numerados (i > 0) heredan el encabezado que los
+            # gobierna. El bloque inicial es texto corrido y no lo necesita.
+            hereda = i > 0 and bool(titulo_vigente)
+            texto = f"[{titulo_vigente}]\n{parte}" if hereda else parte
+            meta = dict(doc.metadata)
+            if hereda:
+                meta["titulo_lista"] = titulo_vigente
+
+            if len(texto) > CHUNK_SIZE:
+                # Bloques muy largos: los sub-dividimos por caracteres.
                 sub = splitter.split_documents(
-                    [Document(page_content=parte, metadata=dict(doc.metadata))]
+                    [Document(page_content=texto, metadata=meta)]
                 )
+                # Encabezado de la lista con viñetas, si el bloque tiene una.
+                intro = _intro_de_vinetas(texto)
+                # Repetimos el encabezado en cada sub-chunk; si no, todos los
+                # pedazos salvo el primero vuelven a quedar huérfanos.
+                for s in sub:
+                    cuerpo = s.page_content
+                    if s.page_content.lstrip().startswith("["):
+                        pass  # ya trae su encabezado
+                    elif hereda:
+                        cuerpo = f"[{titulo_vigente}]\n{cuerpo}"
+                    elif intro and "•" in cuerpo and intro not in cuerpo:
+                        # Sub-chunk con viñetas sueltas: le devolvemos la frase
+                        # que las introduce (incluida la salvedad de alcance).
+                        cuerpo = f"[{intro}]\n{cuerpo}"
+                        s.metadata["titulo_lista"] = intro
+                    s.page_content = cuerpo
                 chunks.extend(sub)
             else:
-                chunks.append(Document(page_content=parte, metadata=dict(doc.metadata)))
+                chunks.append(Document(page_content=texto, metadata=meta))
+
+            # ¿Este bloque termina anunciando una lista nueva?
+            nuevo = _titulo_de_lista(parte)
+            if nuevo:
+                titulo_vigente = nuevo
     print(f"Documento fragmentado en {len(chunks)} chunks.")
 
     # Etiquetamos cada chunk con su sección según la página.
