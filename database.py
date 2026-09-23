@@ -379,3 +379,19 @@ def consultar_estado_reclamo(numero_reclamo: str) -> str:
         f"Tipo: {row['tipo_siniestro']} | Dictamen: {row['dictamen_ia']}\n"
         f"Estado: {row['estado_reclamo']} | Denunciado: {row['fecha_denuncia']}"
     )
+
+
+def vehiculo_tiene_gnc(patente: str) -> bool:
+    """Indica si el vehículo de esa patente está adaptado para GNC.
+
+    El manual excluye a estos vehículos de algunas coberturas, pero el cliente
+    no suele mencionarlo al denunciar ("me robaron el auto"). El agente usa este
+    dato para buscar esas exclusiones por su cuenta.
+    """
+    conn = get_conn()
+    fila = conn.execute(
+        "SELECT tiene_gnc FROM vehiculos WHERE patente = ?",
+        (patente.strip().upper(),),
+    ).fetchone()
+    conn.close()
+    return bool(fila and fila["tiene_gnc"])

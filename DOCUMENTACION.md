@@ -120,8 +120,8 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 ## 7. El grafo de estado (LangGraph)
 
 **Estado** (`EstadoAgente`): `messages`, `intencion`, `patente`, `dni`,
-`reclamo`, `datos_poliza`, `clausulas`, `dictamen`, `siniestro_registrado`,
-`reclamo_resultado`.
+`reclamo`, `datos_poliza`, `clausulas`, `exclusiones`, `dictamen`,
+`siniestro_registrado`, `reclamo_resultado`.
 
 **Nodos:**
 
@@ -132,7 +132,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 | `listar_polizas` | Lista las pólizas de un DNI y pide elegir |
 | `consultar_reclamo` | Consulta el estado de un reclamo por su número |
 | `consultar_poliza` | Llama a la tool de SQL |
-| `consultar_clausulas` | RAG híbrido sobre el manual |
+| `consultar_clausulas` | RAG híbrido sobre el manual; si el vehículo tiene GNC, además busca las exclusiones que dependen de eso (§14) |
 | `emitir_dictamen` | LLM emite determinación + precedentes |
 | `registrar` | INSERT del siniestro en SQLite |
 | `responder` | Genera la respuesta final en lenguaje natural |
@@ -215,6 +215,7 @@ turno" (dictamen, cláusulas, etc.) se resetean en `clasificar`.
 | 20 | Streamlit no abría: `OSError [WinError 123]` en bucle | Streamlit 1.64 dejó de interpretar el shortcode `page_icon=":car:"` y lo buscaba como archivo estático; `:` es inválido en nombres de archivo en Windows | Emoji literal `"🚗"` |
 | 21 | El entorno no era reproducible | `requirements.txt` sin versiones fijadas: `pip install` trae lo último de cada día (así se coló el bug 20) | `requirements-lock.txt` con las 139 versiones probadas |
 | 22 | Exclusión por GNC aplicada fuera de su alcance | El chunking partía por ítems numerados y cada ítem quedaba **sin el encabezado que le da ámbito**. El chunk recuperado decía sólo "5) Cuando el vehículo haya sido adaptado para GNC", sin indicar que pertenece a *Exclusiones para Robo o Hurto* | Propagar el encabezado de lista a cada ítem (numerado y con viñetas) al indexar |
+| 23 | Robo e incendio de un auto con GNC salían cubiertos, aunque el manual los excluye | La búsqueda usaba solo el texto del usuario, que no menciona el GNC: la exclusión nunca se recuperaba | Segunda búsqueda, dirigida a exclusiones, cuando el vehículo tiene GNC según la base (§14) |
 
 ---
 
@@ -259,20 +260,17 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
   Verificado: `openai/gpt-oss-*` **no** acepta imágenes; `qwen/qwen3.8-27b` sí,
   y está disponible en el free tier. Costo medido: 1.300–1.800 tokens por
   imagen sobre un cupo de 200.000 diarios (~40-50 dictámenes con foto por día).
-- **La consulta al RAG no incorpora los atributos del vehículo** (ver §14).
+- Las exclusiones que dependen del vehículo solo contemplan el **GNC** (ver §14).
 
 ---
 
-## 14. Estado del bug del GNC y próximo paso
+## 14. El bug del GNC: diagnóstico y arreglo
 
-> Sección de traspaso: acá está lo que quedó a medio camino, con el diagnóstico
-> hecho para que quien siga no tenga que repetirlo.
+### El problema
 
-### Qué se arregló
-
-El chunking ahora propaga a cada ítem el encabezado de la lista que lo gobierna,
-tanto para listas numeradas (`N)`) como con viñetas (`•`). El manual tiene
-**tres** listas distintas que excluyen vehículos con GNC:
+El sistema daba por cubiertos siniestros que el manual excluye para vehículos
+adaptados a GNC. El manual tiene **tres** listas que mencionan esa exclusión, y
+cada una tiene un alcance distinto:
 
 | Página | Alcance de la exclusión |
 |---|---|
@@ -280,51 +278,90 @@ tanto para listas numeradas (`N)`) como con viñetas (`•`). El manual tiene
 | 15 | Sólo **Incendio** |
 | 16 | Sólo **Robo o Hurto** |
 
-Antes, los tres chunks llegaban al LLM sin ese encabezado y la exclusión se leía
-como absoluta.
+### Cómo se probó
 
-**Resultado medido** (batería de 6 casos cruzando tipo de siniestro × GNC):
+Seis siniestros, cada uno en una conversación nueva, cruzando el tipo de
+siniestro con los dos autos de prueba: el Peugeot 208 (`AF987XX`, producto C+,
+**con GNC**) y el Ford Focus (`AB123CD`, producto D, sin GNC). "Según el
+manual" es la respuesta que corresponde leyendo las cláusulas. Antes de cada
+corrida se vació la tabla `siniestros`, para que los dictámenes de corridas
+anteriores no influyeran como precedentes.
 
-| Caso | Antes del fix | Después |
-|---|---|---|
-| Granizo / vehículo con GNC | Rechazado (falso negativo) | **Requiere peritaje** |
-| Robo / vehículo con GNC | Cubierto (falso positivo) | Cubierto — *sin cambios* |
-| Los otros 4 casos | correctos | correctos |
+| Pregunta literal | Según el manual | Original | Etapa 1 | Etapa 2 |
+|---|---|---|---|---|
+| *Me cayo granizo sobre la AF987XX* | **Ambiguo** | Rechazado | Requiere peritaje | Cubierto |
+| *Me rompieron el parabrisas de la AF987XX* | **Ambiguo** | Cubierto | Cubierto | Cubierto |
+| *Se incendio por completo la AF987XX* | **Rechazado** (pág. 15) | Cubierto ❌ | Cubierto ❌ | Rechazado ✅ |
+| *Me robaron el auto AF987XX* | **Rechazado** (pág. 16) | Cubierto ❌ | Cubierto ❌ | Rechazado ✅ |
+| *Me cayo granizo sobre la AB123CD* | Cubierto | Cubierto ✅ | Cubierto ✅ | Cubierto ✅ |
+| *Me robaron el auto AB123CD* | Cubierto | Cubierto ✅ | Cubierto ✅ | Cubierto ✅ |
 
-La exclusión por GNC dejó de invocarse espuriamente en los 6 casos. El de
-granizo pasó de un rechazo liso a "requiere peritaje", que es defendible: el
-manual **es ambiguo** ahí, porque la lista general de pág. 10 incluye GNC pero
-con la salvedad del "excepto".
+**Los casos ambiguos.** La lista general de pág. 10 excluye los vehículos con
+GNC, pero con la salvedad *"excepto que la cobertura incluya alguno de los
+puntos enumerados"*. Las listas de pág. 15 y 16 repiten la exclusión solo para
+incendio y robo, lo que sugiere que ahí está su alcance real. Para granizo y
+cristales el manual no es concluyente: tanto "Cubierto" como "Requiere
+peritaje" son defendibles.
 
-### Qué queda sin resolver
+> **Corrección.** En la primera versión de esta batería el incendio figuraba
+> como esperado "Cubierto" y, por lo tanto, como caso correcto. Releyendo el
+> manual, la lista *"Exclusiones a la cobertura para Incendio"* de pág. 15
+> incluye el GNC: lo correcto es **Rechazado**. Era un segundo falso positivo,
+> con la misma causa que el robo.
 
-El **falso positivo del robo**: el sistema cubre un robo sobre un vehículo con
-GNC, que las listas de pág. 10 y pág. 16 excluyen.
+### Etapa 1 — Los fragmentos perdían su encabezado (commit `148f605`)
 
-**Causa raíz identificada:** no es un problema de razonamiento sino de
-**recuperación**. Para la consulta *"Me robaron el auto AF987XX"* ninguno de los
-12 chunks recuperados contiene la exclusión por GNC, así que el LLM nunca la ve.
+**Causa.** El chunking partía el manual por ítems numerados, y cada ítem
+quedaba sin el título que le da alcance. El fragmento recuperado decía solo
+*"5) Cuando el vehículo haya sido adaptado para ser propulsado por GNC"*, sin
+indicar que pertenece a *Exclusiones a la cobertura para Robo o Hurto*. El LLM
+lo leía como una exclusión absoluta.
 
-El motivo está en `nodo_consultar_clausulas` (`agent.py`): la búsqueda usa
-**sólo el texto del usuario**, que no menciona el GNC. El dato "este vehículo
-tiene GNC" existe en SQL (`vehiculos.tiene_gnc`) pero nunca entra a la consulta.
+**Arreglo.** Al indexar, cada ítem (numerado o con viñeta) lleva adelante el
+encabezado de su lista.
 
-### Próximo paso sugerido
+**Resultado.** La exclusión dejó de aplicarse donde no correspondía: el granizo
+dejó de rechazarse. Pero el robo y el incendio seguían saliendo cubiertos.
 
-Enriquecer la consulta al RAG con los atributos de la póliza antes de buscar:
+### Etapa 2 — La exclusión nunca se recuperaba
 
-```python
-def nodo_consultar_clausulas(state):
-    mensaje = state["messages"][-1].content
-    # Sumar a la consulta los atributos que disparan exclusiones (GNC, uso,
-    # producto), para que se recuperen las cláusulas que dependen de ellos y
-    # no sólo las que el usuario nombró.
-    consulta = f"{mensaje} {atributos_relevantes(state['datos_poliza'])}"
-    ...
-```
+**Causa.** No era un problema de razonamiento sino de **recuperación**. La
+búsqueda en el manual usaba solo el texto del usuario, y nadie escribe "tengo
+GNC" al denunciar un robo. Para *"Me robaron el auto AF987XX"*, ninguno de los
+12 fragmentos recuperados contenía la exclusión, así que el LLM nunca la veía.
+El dato "este vehículo tiene GNC" estaba en SQL (`vehiculos.tiene_gnc`), pero
+no se usaba para buscar.
 
-Alternativa complementaria: una segunda búsqueda dedicada a exclusiones, cuyos
-resultados se agreguen al contexto del dictamen.
+**Arreglo.** En `nodo_consultar_clausulas`, si la intención es una consulta o
+un siniestro y el vehículo tiene GNC, se hace una **segunda búsqueda**:
 
-Cómo verificar el arreglo: correr la batería de 6 casos y confirmar que
-*robo + GNC* pasa a **Rechazado** sin que se rompan los otros cinco.
+1. Con una consulta armada por el sistema, no por el usuario
+   (`CONSULTA_EXCLUSIONES_GNC`).
+2. Quedándose solo con los fragmentos que son exclusiones y mencionan el GNC
+   (`rag.buscar_exclusiones`). Así queda afuera, por ejemplo, el texto que
+   obliga a *declarar* el equipo de GNC, que no es una exclusión.
+3. El resultado entra al prompt del dictamen en una sección propia, *EXCLUSIONES
+   POR CARACTERÍSTICAS DEL VEHÍCULO*, y el prompt suma una regla: cada exclusión
+   se aplica solo a la cobertura que indica su encabezado.
+
+**Por qué una búsqueda aparte** y no agregar "GNC" a la pregunta del usuario:
+los fragmentos sobre robo y los de GNC competirían por los mismos 12 lugares y
+se desplazarían entre sí. Separados, cada búsqueda trae lo suyo, y en el prompt
+queda claro qué es el relato y qué son las exclusiones.
+
+**Resultado.** 6 de 6. El robo y el incendio pasaron a *Rechazado*. El granizo
+y el parabrisas siguen *Cubierto* aunque ahora el modelo **ve** las
+exclusiones: las lee y entiende que no aplican a esas coberturas.
+
+**Costo.** Una búsqueda extra, local (no consume API), y solo para vehículos
+con GNC.
+
+### Limitaciones
+
+- Solo se contempla el **GNC**, que es la característica que se verificó. El
+  manual también excluye vehículos adaptados a gas licuado de petróleo, pero la
+  base de datos no registra ese dato. Otra característica se sumaría con el
+  mismo mecanismo: su consulta, sus palabras clave y el dato en la base.
+- En los casos ambiguos (granizo, cristales) el sistema hoy responde "Cubierto".
+  Si el grupo decide que lo correcto es "Requiere peritaje", hay que ajustar el
+  prompt del dictamen.

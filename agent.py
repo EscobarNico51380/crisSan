@@ -31,7 +31,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
+import database
 from config import LLM_MODEL
+from rag import buscar_exclusiones
 from tools import (
     consultar_clausulas_poliza,
     consultar_datos_poliza,
@@ -155,6 +157,18 @@ def invocar_con_reintentos(func, *args, **kwargs):
 
 
 # ---------------------------------------------------------------------------
+# Exclusiones que dependen del vehículo
+# ---------------------------------------------------------------------------
+# El cliente no las menciona ("me robaron el auto" no dice que tiene GNC), así
+# que la búsqueda con su mensaje no las trae. Se buscan aparte, con una
+# consulta armada por el sistema, sólo si el vehículo tiene la característica.
+CONSULTA_EXCLUSIONES_GNC = (
+    "exclusiones vehiculo adaptado para ser propulsado por gas natural comprimido GNC"
+)
+CLAVES_GNC = ("gnc", "gas natural comprimido")
+
+
+# ---------------------------------------------------------------------------
 # Estado del grafo
 # ---------------------------------------------------------------------------
 class EstadoAgente(TypedDict):
@@ -165,6 +179,7 @@ class EstadoAgente(TypedDict):
     reclamo: str  # número de reclamo (persistente entre turnos)
     datos_poliza: str  # resultado de consultar_datos_poliza
     clausulas: str  # resultado del RAG
+    exclusiones: str  # exclusiones que dependen del vehículo (ej. GNC)
     dictamen: dict  # dictamen estructurado del siniestro
     siniestro_registrado: str  # resultado del registro del siniestro
     reclamo_resultado: str  # resultado de consultar_estado_reclamo
@@ -252,9 +267,12 @@ PROMPT_DICTAMEN = (
     "1. Si el siniestro no está en las coberturas del producto → 'Rechazado' (fundamentá por qué).\n"
     "2. Considerá franquicia, exclusiones y estado de pago (impago → rechazá).\n"
     "3. Si falta un dato clave (daño total vs parcial) → 'Requiere peritaje'.\n"
-    "4. Extraé tipo de siniestro, fecha (hoy si no se aclara) y si hubo lesionados.\n\n"
-    "Básate en: la póliza, las cláusulas recuperadas y las resoluciones previas "
-    "(referencia, no regla rígida)."
+    "4. Extraé tipo de siniestro, fecha (hoy si no se aclara) y si hubo lesionados.\n"
+    "5. Si hay EXCLUSIONES POR CARACTERÍSTICAS DEL VEHÍCULO: cada una indica entre "
+    "corchetes a qué cobertura aplica. Aplicala SOLO a esa cobertura y respetá "
+    "las salvedades de su encabezado.\n\n"
+    "Básate en: la póliza, las cláusulas recuperadas, las exclusiones y las "
+    "resoluciones previas (referencia, no regla rígida)."
 )
 
 
@@ -318,6 +336,7 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
         "dictamen": {},
         "siniestro_registrado": "",
         "reclamo_resultado": "",
+        "exclusiones": "",
     }
 
 
@@ -354,7 +373,21 @@ def nodo_consultar_poliza(state: EstadoAgente) -> dict:
 def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
     mensaje = state["messages"][-1].content
     resultado = consultar_clausulas_poliza.invoke({"consulta": mensaje})
-    return {"clausulas": resultado}
+
+    # Segunda búsqueda, dirigida a las exclusiones que dependen del vehículo.
+    # Sin ella el dictamen cubría un robo o un incendio de un auto con GNC,
+    # porque esas exclusiones nunca aparecían entre los fragmentos recuperados.
+    # Sólo para consultas y siniestros: en una pregunta general la patente
+    # recordada de un turno anterior no tiene por qué pesar.
+    exclusiones = ""
+    patente = state.get("patente", "")
+    if (
+        state.get("intencion") in ("consulta", "siniestro")
+        and patente
+        and database.vehiculo_tiene_gnc(patente)
+    ):
+        exclusiones = buscar_exclusiones(CONSULTA_EXCLUSIONES_GNC, CLAVES_GNC)
+    return {"clausulas": resultado, "exclusiones": exclusiones}
 
 
 def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
@@ -366,9 +399,17 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     precedentes = consultar_siniestros_previos.invoke(
         {"limite": 5, "patente": state.get("patente", "")}
     )
+    seccion_exclusiones = ""
+    if state.get("exclusiones"):
+        seccion_exclusiones = (
+            "--- EXCLUSIONES POR CARACTERÍSTICAS DEL VEHÍCULO "
+            "(el vehículo tiene GNC) ---\n"
+            f"{state['exclusiones']}\n\n"
+        )
     contexto = (
         f"--- DATOS DE LA PÓLIZA ---\n{state['datos_poliza']}\n\n"
         f"--- CLÁUSULAS DEL MANUAL ---\n{state['clausulas']}\n\n"
+        f"{seccion_exclusiones}"
         f"--- RESOLUCIONES PREVIAS (precedentes) ---\n{precedentes}\n\n"
         f"--- RELATO DEL USUARIO ---\n{mensaje}"
     )
@@ -413,6 +454,10 @@ def nodo_responder(state: EstadoAgente) -> dict:
         contexto.append(f"[Datos de la póliza]\n{state['datos_poliza']}")
     if state.get("clausulas"):
         contexto.append(f"[Cláusulas del manual]\n{state['clausulas']}")
+    if state.get("exclusiones"):
+        contexto.append(
+            f"[Exclusiones por características del vehículo]\n{state['exclusiones']}"
+        )
     if state.get("dictamen"):
         d = state["dictamen"]
         contexto.append(

@@ -299,6 +299,10 @@ def _obtener_chunks() -> list[Document]:
     return _chunks_cache
 
 
+# Separa los fragmentos en el texto que devuelven las búsquedas.
+SEPARADOR_FRAGMENTOS = "\n\n---\n\n"
+
+
 def buscar_clausulas(consulta: str, k: int = 6) -> str:
     """Busca cláusulas relevantes con RETRIEVAL HÍBRIDO y las devuelve formateadas.
 
@@ -337,4 +341,24 @@ def buscar_clausulas(consulta: str, k: int = 6) -> str:
         partes.append(
             f"[Sección: {seccion} | Pág: {pagina}]\n{doc.page_content.strip()}"
         )
-    return "\n\n---\n\n".join(partes)
+    return SEPARADOR_FRAGMENTOS.join(partes)
+
+
+def buscar_exclusiones(consulta: str, claves: tuple[str, ...]) -> str:
+    """Búsqueda dirigida a exclusiones ligadas a una característica del vehículo.
+
+    Usa la misma búsqueda híbrida que ``buscar_clausulas``, pero con una
+    consulta armada por el sistema (no por el usuario), y se queda sólo con los
+    fragmentos que son exclusiones Y mencionan alguna de las ``claves``. Así no
+    se cuela, por ejemplo, el texto que obliga a declarar el equipo de GNC, que
+    no es una exclusión.
+
+    Devuelve "" si no encuentra ninguna.
+    """
+    fragmentos = buscar_clausulas(consulta).split(SEPARADOR_FRAGMENTOS)
+    elegidos = [
+        f
+        for f in fragmentos
+        if "exclu" in f.lower() and any(c in f.lower() for c in claves)
+    ]
+    return SEPARADOR_FRAGMENTOS.join(elegidos)
