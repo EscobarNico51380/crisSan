@@ -11,3 +11,4 @@ pypdf
 python-dotenv
 rank-bm25
 streamlit
+torchvision
