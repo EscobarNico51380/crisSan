@@ -9,8 +9,10 @@ from __future__ import annotations
 import uuid
 
 import streamlit as st
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import HumanMessage
 
+import costos
 from config import GROQ_API_KEY, LLM_MODEL
 
 st.set_page_config(page_title="San Cris", page_icon="🚗", layout="centered")
@@ -38,6 +40,8 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "consumo_total" not in st.session_state:
+    st.session_state.consumo_total = costos.Consumo()
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +52,11 @@ with st.sidebar:
     st.caption("Asistente virtual de San Cristobal")
     st.divider()
     st.markdown(f"**Modelo:** `{LLM_MODEL}`")
+    st.divider()
+    st.markdown("**Costo estimado de la conversación**")
+    # Se completa al final del script, para que incluya el turno recién hecho.
+    costo_total = st.empty()
+    st.caption(costos.ACLARACION)
     st.divider()
     st.markdown("**Probá con estos ejemplos:**")
     ejemplos = [
@@ -62,6 +71,7 @@ with st.sidebar:
     if st.button("Reiniciar conversación", use_container_width=True):
         st.session_state.messages = []
         st.session_state.thread_id = str(uuid.uuid4())
+        st.session_state.consumo_total = costos.Consumo()
         st.rerun()
 
 
@@ -83,6 +93,8 @@ agente = cargar_agente()
 for mensaje in st.session_state.messages:
     with st.chat_message(mensaje["role"]):
         st.markdown(mensaje["content"])
+        if mensaje.get("costo"):
+            st.caption(mensaje["costo"])
 
 # Entrada del usuario.
 if prompt := st.chat_input("Escribí tu consulta sobre tu póliza..."):
@@ -91,16 +103,30 @@ if prompt := st.chat_input("Escribí tu consulta sobre tu póliza..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        # Suma los tokens de todas las llamadas al LLM de este turno.
+        contador = UsageMetadataCallbackHandler()
         with st.spinner("Consultando póliza y cláusulas..."):
             try:
                 resultado = agente.invoke(
                     {"messages": [HumanMessage(content=prompt)]},
-                    config={"configurable": {"thread_id": st.session_state.thread_id}},
+                    config={
+                        "configurable": {"thread_id": st.session_state.thread_id},
+                        "callbacks": [contador],
+                    },
                 )
                 respuesta = resultado["messages"][-1].content
             except Exception as e:  # noqa: BLE001
                 respuesta = f"Ocurrió un error: {e}"
 
-        st.markdown(respuesta)
+        consumo = costos.consumo_de(contador.usage_metadata)
+        st.session_state.consumo_total = st.session_state.consumo_total + consumo
+        costo_turno = f"Este turno: {costos.formatear(consumo)}"
 
-    st.session_state.messages.append({"role": "assistant", "content": respuesta})
+        st.markdown(respuesta)
+        st.caption(costo_turno)
+
+    st.session_state.messages.append(
+        {"role": "assistant", "content": respuesta, "costo": costo_turno}
+    )
+
+costo_total.markdown(costos.formatear(st.session_state.consumo_total))

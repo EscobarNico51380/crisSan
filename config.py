@@ -62,6 +62,17 @@ HISTORIAL_MENSAJES_A_CONSERVAR = 6
 HISTORIAL_RESUMEN_CHARS = 800
 
 
+# --- Costo estimado de las consultas -----------------------------------------
+# Precios del plan pago de Groq, en USD por millón de tokens. Fuente:
+# https://console.groq.com/docs/model/openai/gpt-oss-120b (consultado el
+# 2026-09-23). Con el plan gratuito el costo real es cero: se usan para estimar
+# cuánto costaría. Si se suma un modelo (por ejemplo, uno de visión), agregar
+# su precio acá; si no, sus tokens se cuentan pero no suman costo.
+PRECIOS_USD_POR_MILLON = {
+    "openai/gpt-oss-120b": {"entrada": 0.15, "entrada_cache": 0.075, "salida": 0.60},
+}
+
+
 def ensure_dirs() -> None:
     """Crea las carpetas de datos si todavía no existen."""
     DATA_DIR.mkdir(exist_ok=True)

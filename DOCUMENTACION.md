@@ -101,6 +101,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 | `agent.py` | Grafo de estado LangGraph (nodos, routing, prompts, memoria) |
 | `main.py` | Loop interactivo por consola |
 | `app.py` | Interfaz web Streamlit (chat + memoria por sesión) |
+| `costos.py` | Costo estimado de cada turno y de la conversación, a partir de los tokens |
 
 ---
 
@@ -255,6 +256,7 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - ✅ Resoluciones previas como precedentes.
 - ✅ Interfaz web (Streamlit) y consola.
 - ✅ Manejo de rate limits con reintentos.
+- ✅ Costo estimado de cada turno y de la conversación, visible en el chat.
 
 ## 13. Limitaciones y mejoras futuras
 
@@ -514,3 +516,54 @@ resumen, fue el más caro en salida (1.888). Buena parte de la entrada de cada
 turno son las cláusulas recuperadas del manual (~3.000 tokens), no el
 historial: en charlas cortas el ahorro es chico, y lo que aporta el resumen es
 que el historial deje de crecer en las largas.
+
+
+---
+
+## 17. Costo estimado de cada consulta
+
+### Qué se muestra
+
+- **En la web:** debajo de cada respuesta, en letra chica, los tokens y el
+  costo de ese turno. En la barra lateral, el total de la conversación.
+- **En la consola:** después de cada respuesta, el costo del turno y el
+  acumulado.
+
+Formato: *"4.172 tokens (3.900 de entrada + 272 de salida) · US$ 0,0007"*.
+
+### Cómo se calcula
+
+Cada llamada al LLM informa cuántos tokens de entrada y de salida usó. Durante
+un turno, `UsageMetadataCallbackHandler` (de LangChain) suma los de **todas**
+las llamadas: clasificar, dictaminar, responder y, cuando corresponde, resumir.
+`costos.py` multiplica esos tokens por los precios de `config.py`
+(`PRECIOS_USD_POR_MILLON`). Los embeddings corren localmente y no tienen costo.
+
+Precios de `openai/gpt-oss-120b` en el plan pago de Groq (consultados el
+2026-09-23 en la documentación del modelo):
+
+| | USD por millón de tokens |
+|---|---|
+| Entrada | 0,15 |
+| Entrada en caché | 0,075 |
+| Salida | 0,60 |
+
+**Con el plan gratuito el costo real es cero.** El número indica cuánto
+costaría la misma consulta en el plan pago; la interfaz lo aclara.
+
+**Tokens de razonamiento.** `gpt-oss` es un modelo que "piensa" antes de
+contestar, y esos tokens se cobran como salida aunque no se vean. En una
+prueba con una respuesta de una palabra, 93 de los 105 tokens de salida fueron
+de razonamiento.
+
+### Costos medidos
+
+| Tipo de turno | Tokens | Costo estimado |
+|---|---|---|
+| Consulta de la póliza (*¿Qué plan tengo para la patente AB123CD?*) | ~4.100 | US$ 0,0008 |
+| Pregunta de seguimiento (*Y cuando vence?*) | ~4.200 | US$ 0,0007 |
+| Denuncia de siniestro (*Me robaron el auto AF987XX*): clasifica, dictamina y responde | ~9.100 | US$ 0,0019 |
+
+Un dictamen cuesta unos US$ 0,002: **unos 500 dictámenes por dólar**. Con el
+cupo gratuito de 200.000 tokens diarios alcanza para unos 20 dictámenes o 45
+consultas por día.
