@@ -51,6 +51,17 @@ HISTORIAL_CLASIFICADOR = 4
 HISTORIAL_CLASIFICADOR_CHARS = 300
 
 
+# --- Memoria de la conversación: ventana + resumen ---------------------------
+# Al llegar a HISTORIAL_UMBRAL_RESUMEN mensajes, los más viejos se comprimen en
+# un resumen y se borran del estado; quedan los últimos
+# HISTORIAL_MENSAJES_A_CONSERVAR completos. Cada turno suma dos mensajes
+# (pregunta y respuesta), así que con 12 y 6 se resume una vez cada 3 turnos.
+HISTORIAL_UMBRAL_RESUMEN = 12
+HISTORIAL_MENSAJES_A_CONSERVAR = 6
+# Tope de caracteres por mensaje al armar el pedido de resumen.
+HISTORIAL_RESUMEN_CHARS = 800
+
+
 def ensure_dirs() -> None:
     """Crea las carpetas de datos si todavía no existen."""
     DATA_DIR.mkdir(exist_ok=True)

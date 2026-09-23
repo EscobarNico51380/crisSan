@@ -53,7 +53,7 @@ Usuario (Streamlit / consola)
 │               └── consultar_poliza → cláusulas →    │
 │                       emitir_dictamen → registrar   │
 │                                                     │
-│  Memoria: MemorySaver + thread_id                   │
+│  Memoria: MemorySaver + thread_id + resumen         │
 └──────────┬───────────────────────┬──────────────────┘
            │                       │
      ┌─────▼─────┐          ┌──────▼──────┐
@@ -121,7 +121,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 
 **Estado** (`EstadoAgente`): `messages`, `intencion`, `consulta`, `patente`, `dni`,
 `reclamo`, `datos_poliza`, `clausulas`, `exclusiones`, `dictamen`,
-`siniestro_registrado`, `reclamo_resultado`.
+`siniestro_registrado`, `reclamo_resultado`, `resumen`.
 
 **Nodos:**
 
@@ -136,6 +136,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 | `emitir_dictamen` | LLM emite determinación + precedentes |
 | `registrar` | INSERT del siniestro en SQLite |
 | `responder` | Genera la respuesta final en lenguaje natural |
+| `compactar` | Al final de cada turno: si el historial llegó a 12 mensajes, resume los viejos y deja los últimos 6 (§16) |
 
 **Routing** (señales explícitas del mensaje actual > intención del LLM):
 ```
@@ -149,7 +150,8 @@ consulta/siniestro con patente recordada → consultar_poliza
 
 **Memoria:** `MemorySaver` (checkpointer) + `thread_id` por sesión. Los campos
 `patente`, `dni` y `reclamo` se **preservan entre turnos**; los campos "por
-turno" (dictamen, cláusulas, etc.) se resetean en `clasificar`.
+turno" (dictamen, cláusulas, etc.) se resetean en `clasificar`. El historial
+se mantiene acotado con una ventana + resumen (§16).
 
 ---
 
@@ -217,6 +219,7 @@ turno" (dictamen, cláusulas, etc.) se resetean en `clasificar`.
 | 22 | Exclusión por GNC aplicada fuera de su alcance | El chunking partía por ítems numerados y cada ítem quedaba **sin el encabezado que le da ámbito**. El chunk recuperado decía sólo "5) Cuando el vehículo haya sido adaptado para GNC", sin indicar que pertenece a *Exclusiones para Robo o Hurto* | Propagar el encabezado de lista a cada ítem (numerado y con viñetas) al indexar |
 | 23 | Robo e incendio de un auto con GNC salían cubiertos, aunque el manual los excluye | La búsqueda usaba solo el texto del usuario, que no menciona el GNC: la exclusión nunca se recuperaba | Segunda búsqueda, dirigida a exclusiones, cuando el vehículo tiene GNC según la base (§14) |
 | 24 | Las preguntas de seguimiento ("¿y cuándo vence?") se clasificaban y buscaban sueltas | El clasificador y la búsqueda leían solo el último mensaje | El clasificador recibe los últimos mensajes y devuelve la pregunta reescrita, en la misma llamada al LLM (§15) |
+| 25 | El historial que se mandaba al LLM crecía sin límite | El nodo que responde enviaba toda la conversación en cada turno | Ventana + resumen: al llegar a 12 mensajes se resumen los viejos y quedan los últimos 6 (§16) |
 
 ---
 
@@ -421,3 +424,93 @@ hipótesis es una consulta.
 
 Se repitió además la batería del GNC (§14) para verificar que el clasificador
 nuevo no cambiara los dictámenes.
+
+
+---
+
+## 16. Memoria de la conversación: ventana + resumen
+
+### El problema
+
+El nodo que responde mandaba al LLM **toda** la conversación en cada turno.
+En una charla larga, lo que se envía crece sin límite: se gasta el cupo diario
+de tokens de Groq (200.000 por organización) y la respuesta se degrada por el
+ruido acumulado.
+
+### La solución
+
+Es el patrón que documenta LangGraph para este caso: el estado guarda, además
+de los mensajes, un **resumen** de la conversación. El nodo `compactar` corre
+al final de cada turno:
+
+- Mientras el historial tiene **menos de 12 mensajes**, no hace nada (ni llama
+  al LLM).
+- Al llegar a 12, le pide al LLM que incorpore los mensajes viejos al resumen
+  (actualizando el anterior, si existe), y **los borra del estado** con
+  `RemoveMessage`. Quedan los **últimos 6** completos, empezando siempre por
+  una pregunta del usuario.
+
+Como cada turno suma dos mensajes (pregunta y respuesta), se resume **una vez
+cada 3 turnos**. Los números están en `config.py`
+(`HISTORIAL_UMBRAL_RESUMEN`, `HISTORIAL_MENSAJES_A_CONSERVAR`).
+
+El LLM ve siempre dos cosas: el resumen de lo viejo y los últimos mensajes
+completos. El resumen llega al nodo que responde y también al clasificador,
+para que entienda referencias a cosas que se hablaron hace varios turnos.
+
+**Decisiones de diseño:**
+
+| Decisión | Motivo |
+|---|---|
+| Comprimir de a tandas (12 → 6) y no en cada turno | Si se resumiera cada vez que se pasa de 6, habría una llamada extra al LLM en todos los turnos |
+| El nodo corre al **final** del turno | La conversación tiene pares completos pregunta-respuesta, y todos los caminos del grafo pasan por él (incluidos los que no pasan por `responder`) |
+| El resumen conserva patentes, reclamos, dictámenes y lo que quiere el cliente | La patente, el DNI y el reclamo ya viven en el estado; el resumen se ocupa del hilo de la charla |
+| Si el resumen falla, no se borra nada | Es preferible un historial más largo por un turno que perder contexto |
+
+**Qué no cambia:** la pantalla de Streamlit guarda su propia copia del chat,
+así que el usuario sigue viendo toda la conversación. Y el **dictamen no usa el
+resumen**: arma su contexto con datos frescos de la base y del manual, así que
+un error del resumen no puede cambiar una decisión de cobertura.
+
+### Resultados
+
+Charla de 8 turnos. En el primero el usuario cuenta algo que no queda en ningún
+campo del estado (que piensa vender el Focus); en el séptimo, después de la
+compresión, pregunta por eso.
+
+| Turno | Mensaje del usuario | Mensajes en el estado | Resumen |
+|---|---|---|---|
+| 1 | *Hola, soy Carlos. Estoy pensando en vender el Focus el mes que viene.* | 2 | no |
+| 2 | *Que plan tengo para la patente AB123CD?* | 4 | no |
+| 3 | *Que es la franquicia?* | 6 | no |
+| 4 | *Que es CLEAS?* | 8 | no |
+| 5 | *Que cubre el granizo?* | 10 | no |
+| 6 | *Que es Asistencia 24?* | **6** (se comprimió) | **sí** |
+| 7 | *Que te habia dicho que pensaba hacer con el Focus?* | 8 | sí |
+| 8 | *Y cual era la franquicia de mi poliza?* | 10 | sí |
+
+En el turno 6 se resumieron los tres primeros intercambios. El resumen quedó así:
+
+> Carlos, DNI no proporcionado, consultó la póliza de la patente AB123CD.
+> Producto D c/fran, suma asegurada $25.000.000, franquicia fija $460.000, uso
+> particular sin GNC, rastreador sí, pago al día, vencimiento 2027-01-01.
+> Preguntó qué es la franquicia; se le explicó que es el importe que paga el
+> asegurado en siniestro, $460.000 en su caso, con detalle de aplicación y
+> tipos. También manifestó intención de vender su Focus el mes próximo,
+> solicitando información al respecto.
+
+En el turno 7, con esos mensajes ya borrados del estado, respondió: *"Me
+comentaste que tenés la intención de vender tu Focus el mes próximo y que
+buscabas información al respecto."* El dato sobrevivió gracias al resumen.
+
+**Una imprecisión observada:** el resumen agregó *"solicitando información al
+respecto"*, que el usuario nunca pidió, y la respuesta del turno 7 lo repitió.
+Es el riesgo esperable de resumir con un LLM. Queda acotado porque el dictamen
+no usa el resumen.
+
+**Tokens por turno** (entrada + salida, sumando todas las llamadas al LLM del
+turno): entre 3.000 y 5.200 de entrada. El turno 6, que incluye la llamada del
+resumen, fue el más caro en salida (1.888). Buena parte de la entrada de cada
+turno son las cláusulas recuperadas del manual (~3.000 tokens), no el
+historial: en charlas cortas el ahorro es chico, y lo que aporta el resumen es
+que el historial deje de crecer en las largas.

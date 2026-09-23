@@ -23,7 +23,12 @@ import re
 import time
 from typing import Annotated, Literal, Optional, TypedDict
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+)
 from langchain_core.messages import AnyMessage
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
@@ -32,7 +37,14 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 import database
-from config import HISTORIAL_CLASIFICADOR, HISTORIAL_CLASIFICADOR_CHARS, LLM_MODEL
+from config import (
+    HISTORIAL_CLASIFICADOR,
+    HISTORIAL_CLASIFICADOR_CHARS,
+    HISTORIAL_MENSAJES_A_CONSERVAR,
+    HISTORIAL_RESUMEN_CHARS,
+    HISTORIAL_UMBRAL_RESUMEN,
+    LLM_MODEL,
+)
 from rag import buscar_exclusiones
 from tools import (
     consultar_clausulas_poliza,
@@ -172,7 +184,8 @@ CLAVES_GNC = ("gnc", "gas natural comprimido")
 # Estado del grafo
 # ---------------------------------------------------------------------------
 class EstadoAgente(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]  # historial
+    messages: Annotated[list[AnyMessage], add_messages]  # historial reciente
+    resumen: str  # resumen de los mensajes viejos (persistente entre turnos)
     intencion: str  # consulta | siniestro | general | charla
     consulta: str  # mensaje reescrito para entenderse sin el historial
     patente: str  # patente extraída (persistente entre turnos)
@@ -292,10 +305,49 @@ PROMPT_DICTAMEN = (
 )
 
 
+PROMPT_RESUMEN = (
+    "Resumí la conversación entre un cliente y San Cris, el asistente de seguros "
+    "San Cristóbal, para que el asistente pueda seguirla sin ver los mensajes "
+    "originales.\n"
+    "Conservá: patentes y DNI mencionados, siniestros denunciados con su número "
+    "de reclamo y dictamen, datos de pólizas consultados y qué quiere o "
+    "preguntó el cliente.\n"
+    "Si hay un RESUMEN ANTERIOR, actualizalo con los mensajes nuevos: no lo "
+    "descartes.\n"
+    "No inventes nada que no esté en el texto. Máximo 120 palabras, en tercera "
+    "persona, sin encabezados."
+)
+
+
 # ---------------------------------------------------------------------------
 # Nodos
 # ---------------------------------------------------------------------------
-def _entrada_clasificador(mensajes: list[AnyMessage]) -> str:
+def ventana_historial(mensajes: list[AnyMessage], maximo: int) -> list[AnyMessage]:
+    """Devuelve hasta los últimos ``maximo`` mensajes, empezando por el usuario.
+
+    Si la ventana arrancara con una respuesta del asistente, el LLM la vería sin
+    la pregunta que la originó, así que se descartan las del principio hasta
+    llegar a un mensaje del usuario.
+    """
+    ventana = list(mensajes[-maximo:])
+    while ventana and not isinstance(ventana[0], HumanMessage):
+        ventana.pop(0)
+    return ventana
+
+
+def _transcripcion(mensajes: list[AnyMessage], tope: int) -> str:
+    """Pasa mensajes a texto "Usuario: ... / Asistente: ...", recortando cada uno."""
+    lineas = []
+    for m in mensajes:
+        quien = "Usuario" if isinstance(m, HumanMessage) else "Asistente"
+        texto = " ".join(extraer_texto(m.content).split())
+        if len(texto) > tope:
+            texto = texto[:tope] + "…"
+        lineas.append(f"{quien}: {texto}")
+    return "\n".join(lineas)
+
+
+def _entrada_clasificador(mensajes: list[AnyMessage], resumen: str = "") -> str:
     """Arma lo que ve el clasificador: el mensaje actual y, si hay, los previos.
 
     Con el historial el clasificador entiende las preguntas de seguimiento y
@@ -305,20 +357,18 @@ def _entrada_clasificador(mensajes: list[AnyMessage]) -> str:
     """
     actual = mensajes[-1].content
     previos = mensajes[:-1][-HISTORIAL_CLASIFICADOR:]
-    if not previos:
+    if not previos and not resumen:
         return actual
-    lineas = []
-    for m in previos:
-        quien = "Usuario" if isinstance(m, HumanMessage) else "Asistente"
-        texto = " ".join(extraer_texto(m.content).split())
-        if len(texto) > HISTORIAL_CLASIFICADOR_CHARS:
-            texto = texto[:HISTORIAL_CLASIFICADOR_CHARS] + "…"
-        lineas.append(f"{quien}: {texto}")
-    return (
-        "HISTORIAL RECIENTE (para entender el mensaje, no para clasificarlo):\n"
-        + "\n".join(lineas)
-        + f"\n\nMENSAJE A CLASIFICAR:\n{actual}"
-    )
+    partes = []
+    if resumen:
+        partes.append(f"RESUMEN DE LA CONVERSACIÓN ANTERIOR:\n{resumen}")
+    if previos:
+        partes.append(
+            "HISTORIAL RECIENTE (para entender el mensaje, no para clasificarlo):\n"
+            + _transcripcion(previos, HISTORIAL_CLASIFICADOR_CHARS)
+        )
+    partes.append(f"MENSAJE A CLASIFICAR:\n{actual}")
+    return "\n\n".join(partes)
 
 
 def nodo_clasificar(state: EstadoAgente) -> dict:
@@ -338,7 +388,11 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
             clasificador.invoke,
             [
                 SystemMessage(content=PROMPT_CLASIFICAR),
-                HumanMessage(content=_entrada_clasificador(state["messages"])),
+                HumanMessage(
+                    content=_entrada_clasificador(
+                        state["messages"], state.get("resumen", "")
+                    )
+                ),
             ],
         )
         intencion = resultado.intencion
@@ -527,6 +581,12 @@ def nodo_responder(state: EstadoAgente) -> dict:
         contexto.append(f"[Estado del reclamo]\n{state['reclamo_resultado']}")
 
     mensajes = [SystemMessage(content=PROMPT_RESPONDER)]
+    if state.get("resumen"):
+        mensajes.append(
+            SystemMessage(
+                content=f"RESUMEN DE LA CONVERSACIÓN HASTA AHORA:\n{state['resumen']}"
+            )
+        )
     if contexto:
         mensajes.append(SystemMessage(content="\n\n".join(contexto)))
     else:
@@ -555,6 +615,51 @@ def nodo_responder(state: EstadoAgente) -> dict:
             "¿Podrías reformular tu consulta?"
         )
     return {"messages": [AIMessage(content=texto)]}
+
+
+def nodo_compactar(state: EstadoAgente) -> dict:
+    """Comprime los mensajes viejos en el resumen cuando el historial es largo.
+
+    Corre al final de cada turno, así la conversación tiene pares completos y
+    la ventana que queda empieza con una pregunta del usuario. Si no se llegó
+    al umbral no hace nada (ni llama al LLM).
+
+    Los mensajes resumidos se borran del estado con ``RemoveMessage``. La
+    pantalla de Streamlit guarda su propia copia del chat, así que el usuario
+    sigue viendo todo. El dictamen tampoco depende del resumen: arma su
+    contexto con datos frescos de la base y del manual.
+    """
+    mensajes = state["messages"]
+    if len(mensajes) < HISTORIAL_UMBRAL_RESUMEN:
+        return {}
+
+    conservar = ventana_historial(mensajes, HISTORIAL_MENSAJES_A_CONSERVAR)
+    viejos = mensajes[: len(mensajes) - len(conservar)]
+    if not viejos:
+        return {}
+
+    pedido = (
+        f"RESUMEN ANTERIOR:\n{state.get('resumen') or '(todavía no hay)'}\n\n"
+        f"MENSAJES NUEVOS A INCORPORAR:\n"
+        f"{_transcripcion(viejos, HISTORIAL_RESUMEN_CHARS)}"
+    )
+    try:
+        respuesta = invocar_con_reintentos(
+            llm.invoke,
+            [SystemMessage(content=PROMPT_RESUMEN), HumanMessage(content=pedido)],
+        )
+        resumen = extraer_texto(respuesta.content).strip()
+    except Exception:  # noqa: BLE001
+        # Si el resumen falla no borramos nada: es preferible un historial más
+        # largo por un turno que perder contexto.
+        return {}
+    if not resumen:
+        return {}
+
+    return {
+        "resumen": resumen,
+        "messages": [RemoveMessage(id=m.id) for m in viejos],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +713,7 @@ def construir_agente():
     grafo.add_node("emitir_dictamen", nodo_emitir_dictamen)
     grafo.add_node("registrar", nodo_registrar)
     grafo.add_node("responder", nodo_responder)
+    grafo.add_node("compactar", nodo_compactar)
 
     grafo.add_edge(START, "clasificar")
     grafo.add_conditional_edges(
@@ -622,8 +728,10 @@ def construir_agente():
             "consultar_poliza": "consultar_poliza",
         },
     )
-    grafo.add_edge("pedir_patente", END)
-    grafo.add_edge("listar_polizas", END)
+    # Todos los caminos terminan pasando por "compactar", que sólo actúa
+    # cuando el historial llegó al umbral.
+    grafo.add_edge("pedir_patente", "compactar")
+    grafo.add_edge("listar_polizas", "compactar")
     grafo.add_edge("consultar_reclamo", "responder")
     grafo.add_edge("consultar_poliza", "consultar_clausulas")
     grafo.add_conditional_edges(
@@ -633,7 +741,8 @@ def construir_agente():
     )
     grafo.add_edge("emitir_dictamen", "registrar")
     grafo.add_edge("registrar", "responder")
-    grafo.add_edge("responder", END)
+    grafo.add_edge("responder", "compactar")
+    grafo.add_edge("compactar", END)
 
     return grafo.compile(checkpointer=MemorySaver())
 
