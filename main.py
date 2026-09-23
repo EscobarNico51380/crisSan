@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage
 
 import costos
 import database
-from agent import agente
+from agent import agente, mensaje_para_el_usuario
 
 # Un thread_id fijo por sesión para que la memoria funcione.
 CONFIG = {"configurable": {"thread_id": "demo-1"}}
@@ -57,7 +57,9 @@ def main() -> None:
             )
             respuesta = resultado["messages"][-1].content
         except Exception as e:  # noqa: BLE001
-            respuesta = f"Ocurrió un error: {e}"
+            # El detalle técnico, aparte; en el chat, un mensaje amigable.
+            print(f"\n[error] {type(e).__name__}: {e}")
+            respuesta = mensaje_para_el_usuario(e)
         print(f"\nSan Cris: {respuesta}")
 
         consumo = costos.consumo_de(contador.usage_metadata)

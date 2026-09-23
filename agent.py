@@ -19,6 +19,7 @@ thread_id por sesión: el historial vive en el estado ``messages``.
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from typing import Annotated, Literal, Optional, TypedDict
@@ -166,6 +167,54 @@ def invocar_con_reintentos(func, *args, **kwargs):
                 continue
             raise
     raise ultimo_error
+
+
+def _segundos_de_espera(mensaje: str) -> float | None:
+    """Lee la espera que sugiere la API ("try again in 20m40.7s" -> 1240.7)."""
+    m = re.search(
+        r"try again in\s+(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?",
+        mensaje,
+    )
+    if not m or not any(m.groups()):
+        return None
+    horas, minutos, segundos = m.groups()
+    return int(horas or 0) * 3600 + int(minutos or 0) * 60 + float(segundos or 0)
+
+
+def mensaje_para_el_usuario(error: Exception) -> str:
+    """Traduce un error del sistema a un mensaje apto para el chat.
+
+    Antes el chat mostraba el error crudo de la API, con el número de
+    organización de Groq incluido. El detalle técnico lo sigue viendo quien
+    corre la app, en la terminal (lo imprimen ``app.py`` y ``main.py``).
+    """
+    texto = str(error)
+    es_limite = any(
+        s in texto
+        for s in ("rate_limit_exceeded", "Rate limit", "rate limit", "429")
+    )
+    if not es_limite:
+        return (
+            "No pudimos procesar tu consulta. "
+            "Probá de nuevo en unos minutos."
+        )
+
+    espera = _segundos_de_espera(texto)
+    if espera is None:
+        cuando = "en unos minutos"
+    else:
+        minutos = max(1, math.ceil(espera / 60))
+        if minutos >= 60:
+            horas, resto = divmod(minutos, 60)
+            cuando = f"en {horas} hora{'s' if horas > 1 else ''}"
+            if resto:
+                cuando += f" y {resto} minuto{'s' if resto > 1 else ''}"
+        else:
+            cuando = f"en {minutos} minuto{'s' if minutos > 1 else ''}"
+    return (
+        "El sistema no puede responder consultas en este momento. "
+        f"Probá de nuevo {cuando}."
+    )
 
 
 # ---------------------------------------------------------------------------

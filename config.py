@@ -24,9 +24,12 @@ load_dotenv(ROOT / ".env")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # --- Modelos ----------------------------------------------------------------
-# Free tier de Groq: 200.000 tokens/día POR ORGANIZACIÓN (no por modelo).
+# Free tier de Groq: 200.000 tokens/día POR MODELO y por organización (cuenta).
+# Verificado: con el cupo de gpt-oss-120b agotado, gpt-oss-20b respondía con la
+# misma key. Dos keys de la misma cuenta comparten el cupo; otra cuenta trae el
+# suyo. El límite cuenta los tokens de las últimas 24 horas.
 # - "openai/gpt-oss-120b" (120B): mejor razonamiento, 500 tps.
-# - "openai/gpt-oss-20b" (20B): más rápido (1000 tps), mismo cupo diario.
+# - "openai/gpt-oss-20b" (20B): más rápido (1000 tps), con su propio cupo.
 LLM_MODEL = "openai/gpt-oss-120b"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-base"
 

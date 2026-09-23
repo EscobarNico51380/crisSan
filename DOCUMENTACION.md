@@ -78,7 +78,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 |---|---|---|
 | Orquestación | **LangGraph** (`StateGraph`) | Control explícito del flujo (grafo de estado), no un ReAct a ciegas |
 | Framework | **LangChain** (`@tool`, retriever, loaders) | Requisito del enunciado |
-| LLM | **Groq** — `openai/gpt-oss-120b` | Free tier: 200K tokens/día (por organización), 30 req/min. Rápido (500 tps) |
+| LLM | **Groq** — `openai/gpt-oss-120b` | Free tier: 200K tokens/día por modelo y por cuenta, 30 req/min. Rápido (500 tps) |
 | Structured output | `json_schema` (nativo de Groq) | Fuerza el schema del lado del servidor |
 | Base vectorial | **ChromaDB** (espacio coseno) | Persistencia local, simple |
 | Embeddings | **`intfloat/multilingual-e5-base`** | Entrenado específicamente para retrieval |
@@ -222,6 +222,7 @@ se mantiene acotado con una ventana + resumen (§16).
 | 24 | Las preguntas de seguimiento ("¿y cuándo vence?") se clasificaban y buscaban sueltas | El clasificador y la búsqueda leían solo el último mensaje | El clasificador recibe los últimos mensajes y devuelve la pregunta reescrita, en la misma llamada al LLM (§15) |
 | 25 | El historial que se mandaba al LLM crecía sin límite | El nodo que responde enviaba toda la conversación en cada turno | Ventana + resumen: al llegar a 12 mensajes se resumen los viejos y quedan los últimos 6 (§16) |
 | 26 | Al decir "Hola" respondía "No dispongo de la información necesaria… indicame tu patente" | Un saludo se clasifica como charla y llega al nodo que responde sin contexto; en ese caso se le agregaba la advertencia anti-alucinación pensada para consultas sin datos ("decí que no podés responder y pedí patente o DNI"). "Hola, ¿de qué sirve este chat?" andaba bien por casualidad: se clasificaba como pregunta general, buscaba en el manual y llegaba con contexto | Para la charla, una instrucción propia: saludar, presentarse, contar qué puede hacer, y avisar con amabilidad si el tema no es de seguros. La advertencia queda para los demás casos sin contexto |
+| 27 | Al agotarse el cupo diario, el chat mostraba el error crudo de la API, con el número de organización de Groq | `app.py` y `main.py` mostraban el texto de la excepción tal cual | `mensaje_para_el_usuario` lo traduce a *"El sistema no puede responder consultas en este momento. Probá de nuevo en 21 minutos."*, calculando la espera que informa la API. El detalle técnico se imprime en la terminal. Además se verificó que el cupo es **por modelo** (con `gpt-oss-120b` agotado, `gpt-oss-20b` respondía con la misma key), y se corrigió el comentario de `config.py` que decía lo contrario |
 
 ---
 
@@ -437,7 +438,7 @@ nuevo no cambiara los dictámenes.
 
 El nodo que responde mandaba al LLM **toda** la conversación en cada turno.
 En una charla larga, lo que se envía crece sin límite: se gasta el cupo diario
-de tokens de Groq (200.000 por organización) y la respuesta se degrada por el
+de tokens de Groq (200.000 por modelo) y la respuesta se degrada por el
 ruido acumulado.
 
 ### La solución

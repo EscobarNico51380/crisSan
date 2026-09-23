@@ -116,7 +116,11 @@ if prompt := st.chat_input("Escribí tu consulta sobre tu póliza..."):
                 )
                 respuesta = resultado["messages"][-1].content
             except Exception as e:  # noqa: BLE001
-                respuesta = f"Ocurrió un error: {e}"
+                from agent import mensaje_para_el_usuario
+
+                # El detalle técnico va a la terminal; al chat, un mensaje amigable.
+                print(f"[error] {type(e).__name__}: {e}")
+                respuesta = mensaje_para_el_usuario(e)
 
         consumo = costos.consumo_de(contador.usage_metadata)
         st.session_state.consumo_total = st.session_state.consumo_total + consumo
