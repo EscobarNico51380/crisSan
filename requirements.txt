@@ -11,4 +11,7 @@ pypdf
 python-dotenv
 rank-bm25
 streamlit
-torchvision
+
+# Solo Linux: alli torch se instala con soporte CUDA y hace falta torchvision
+# (Windows funciona sin el). pip saltea esta linea en otros sistemas.
+torchvision; sys_platform == "linux"

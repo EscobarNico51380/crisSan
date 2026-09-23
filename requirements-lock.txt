@@ -146,3 +146,6 @@ websockets==16.1.1
 xxhash==4.0.1
 yarl==1.25.1
 zstandard==0.25.0
+
+# Solo Linux (probado por Nicolas con torch 2.14.0 + CUDA 13).
+torchvision==0.29.0; sys_platform == "linux"
