@@ -1,144 +1,73 @@
-# Informe de faltantes y mejoras — San Cris (TP2)
+# Pendientes — San Cris (TP2)
 
-Estado del proyecto frente a los contenidos de la cátedra y buenas prácticas de
-LangChain / LangGraph. Ordenado por severidad. Cada ítem indica **qué falta**,
-**por qué importa** y **dónde tocar**.
+Una sola lista del grupo. Cuando algo se termina, se marca ✅ y se anota el
+commit.
 
----
+**Fechas:** video de 10-15 minutos el **30/09** (todos los grupos). Defensa
+oral el 30/09 o el 14/10 (turno tarde/noche), o el 01/10 o el 08/10 (turno
+mañana); incluye 1-2 preguntas sobre el TP1.
 
-## CRÍTICO
-
-### C1. La selección de herramientas no es ReAct: hoy es un grafo determinístico
-
-**Qué falta.** En el flujo actual el LLM **no decide qué herramienta usar**. El
-único punto donde interviene el modelo para el ruteo es `nodo_clasificar`
-(`agent.py:275`), que clasifica la intención (`consulta` / `siniestro` /
-`general` / `charla`). A partir de ahí el camino es 100% reglas fijas
-(`rutear_desde_clasificar`, `agent.py:455`) y las tools se invocan como
-**funciones Python comunes** (`consultar_datos_poliza.invoke(...)`,
-`agent.py:350`), no como herramientas de un agente.
-
-**Por qué importa.** El enunciado del TP describe explícitamente el patrón
-ReAct: *"el LLM alterna entre razonar una pregunta y decidir utilizar una
-herramienta específica"* (`IdeaTP.md`, líneas 36-37). El criterio de evaluación
-**"Aplicación del marco teórico"** espera ver esa decisión del modelo. Con el
-diseño actual, la defensa oral no puede mostrar al LLM eligiendo tools: solo
-puede mostrar clasificación de intención + ruteo por reglas.
-
-**Cómo resolverlo — enfoque HÍBRIDO (recomendado), no ReAct puro.**
-Un ReAct libre sobre TODO el flujo es un retroceso para este caso: el dictamen
-de cobertura y el registro del siniestro exigen determinismo y auditabilidad
-(hoy garantizados por el grafo). El diseño correcto combina lo mejor de ambos:
-
-- **Camino crítico determinístico (se mantiene):** `consultar_poliza` →
-  `consultar_clausulas` → `emitir_dictamen` → `registrar`. Nadie quiere que un
-  LLM improvise una decisión de cobertura ni que registre dos veces un
-  siniestro.
-- **Loop ReAct para la parte abierta:** un agente con las tools bindeadas
-  (`create_react_agent` de `langgraph.prebuilt`, o `create_agent` de
-  `langchain.agents` — ambos disponibles en el entorno) que resuelva las
-  preguntas de consulta/RAG eligiendo herramientas por sí mismo.
-
-Con esto el LLM **sí** selecciona herramientas (cumple el marco teórico) sin
-perder la confiabilidad del dictamen.
-
-**Dónde tocar.** `agent.py` (nuevo nodo/subgrafo ReAct + bind de tools),
-`tools.py` (ya están decoradas con `@tool`, solo falta entregárselas a un
-agente). Registrar la decisión actual ("grafo determinístico") como limitación
-conocida en `DOCUMENTACION.md` §§ 9 y 13.
+**Formato de entrega (confirmado por el profesor):** proyecto de varios `.py`
+con la documentación, siempre que incluya las instrucciones para reproducirlo.
 
 ---
 
-## ALTA — Calidad de respuesta
+## Problemas (cosas que andaban mal)
 
-### A1. Preguntas de seguimiento: falta el patrón *history-aware*
+| Problema | Estado | Commit |
+|---|---|---|
+| Streamlit no abría en Windows (el ícono de la página) | ✅ | `a0bf355` |
+| El entorno no era reproducible (versiones sin fijar) | ✅ | `0198a99` |
+| `torchvision` hacía falta en Linux y no en Windows | ✅ Se instala solo en Linux | `20191bb` |
+| Los precedentes eran los últimos casos, no casos comparables | ✅ | `361026d` |
+| La exclusión por GNC se aplicaba al granizo | ✅ | `148f605` |
+| El robo y el incendio de un auto con GNC salían cubiertos | ✅ | `5363974` |
+| Las preguntas de seguimiento ("¿y cuándo vence?") se interpretaban sueltas | ✅ | `881329f` |
+| El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
+| Al saludar, responde pidiendo la patente | ⏳ Antes del video | |
+| La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
-`nodo_consultar_clausulas` (`agent.py:355`) y `nodo_clasificar` (`agent.py:265`)
-leen **solo** `state["messages"][-1].content`. Un seguimiento como "¿y con
-granizo?" llega al retrieval como frase suelta: se recuperan cláusulas al azar
-y se clasifica mal.
+## Features
 
-**Fix.** Nodo `condensar` previo a clasificar/recuperar: un LLM reescribe el
-seguimiento a pregunta autónoma usando el historial. Es el patrón *history-aware
-retriever* de LangChain. La persistencia de `patente`/`dni`/`reclamo` en estado
-resuelve los datos, pero **no** el texto de la consulta al RAG.
+| Feature | Estado | Notas |
+|---|---|---|
+| Costo estimado de cada consulta, visible en el chat | ✅ | `4906c02` |
+| Que el LLM elija las herramientas (patrón ReAct), dejando fijo el camino del dictamen | ⏳ | Lo que más suma en "aplicación del marco teórico". Falta decidir con qué armarlo (`create_agent`, que es el que usa la cátedra, o `create_react_agent`) y qué preguntas pasan por ahí |
+| Interpretar imágenes enviadas por el cliente | ⏳ | Prometido en el mail al profesor. Modelo verificado: `qwen/qwen3.8-27b` (~1.300-1.800 tokens por foto). Falta decidir si describe la foto para el dictamen actual o si dictamina él |
+| Poder cambiar de modelo desde la configuración | ⏳ | Conviene antes de las imágenes, que usan un segundo modelo |
+| Mostrar en la web de dónde sale cada respuesta (fragmentos del manual, herramientas, dictamen) | ⏳ | Luce mucho en el video |
+| Más autos de prueba en la base | ⏳ A confirmar | Hoy el único auto con GNC es también el único C+, así que las pruebas no separan el efecto del producto del efecto del GNC |
+| Exclusiones por gas licuado (GLP) y por uso para transporte de pasajeros | ⏳ A confirmar | El manual las tiene; se sumarían con el mismo mecanismo que el GNC |
+| Historial que sobreviva al cerrar la app (SQLite) | ⏳ Baja prioridad | Suma una dependencia |
+| Ajustar el tamaño y el solapamiento de los fragmentos del manual | ⏳ Baja prioridad | Cualquier cambio obliga a repetir la prueba del GNC |
 
-### A2. Historial sin recorte ni resumen: el contexto crece indefinidamente
+## Por decidir
 
-`nodo_responder` (`agent.py:438`) hace `mensajes.extend(state["messages"])`: el
-historial completo, siempre. Sin ventana, sin recorte, sin resumen. Con el free
-tier de Groq (200K tokens/día **compartidos por organización**), una charla
-larga agota el cupo y degrada la respuesta por ruido acumulado.
+- **Granizo o parabrisas en un auto con GNC.** El manual es ambiguo: la lista
+  general de exclusiones incluye el GNC, pero con la salvedad "excepto que la
+  cobertura incluya alguno de los puntos enumerados". Hoy el sistema responde
+  "Cubierto"; la otra lectura defendible es "Requiere peritaje". Tiene que
+  coincidir con lo que se diga en la defensa.
 
-**Fix.** `trim_messages` (`langchain_core.messages`) para ventana deslizante +
-resumen incremental cuando el historial supera un umbral.
+## Entregables
 
-### A3. El modelo no es un componente intercambiable
+| Entregable | Estado |
+|---|---|
+| Slides de la defensa | ⏳ |
+| Guion y grabación del video (vence el 30/09) | ⏳ |
+| Vaciar la tabla de siniestros antes de grabar (las pruebas quedan como precedentes) | ⏳ |
+| Repaso del TP1 | ⏳ |
 
-`llm = ChatGroq(...)` está instanciado en el import de `agent.py:47`,
-hardcodeado. La cátedra pide el backend separado del agente.
+## Cierre (lo último antes de entregar)
 
-**Fix.** Módulo `llm.py` con factory `get_llm()` que lea el proveedor desde
-`config.py` / `.env`. Cambiar Groq ↔ OpenAI ↔ Ollama pasa a ser una variable de
-entorno.
-
----
-
-## MEDIA
-
-### M1. Persistencia del historial entre sesiones
-
-`MemorySaver` (`agent.py:530`) vive en RAM: al cerrar Streamlit o la consola se
-pierde toda la conversación.
-
-**Fix.** `SqliteSaver` de `langgraph-checkpoint-sqlite` (requiere
-`pip install langgraph-checkpoint-sqlite`), apuntando a un SQLite. Mantiene
-LangGraph y cumple el punto de la cátedra ("o una base de datos").
-**Nota:** NO construir sobre `FileChatMessageHistory` — vive en
-`langchain_community`, que está oficialmente en sunset (avisa en runtime).
-
-### M2. Trazabilidad: UI de razonamiento, tools y chunks
-
-No se puede ver **de dónde** sale cada respuesta. `buscar_clausulas`
-(`rag.py:203`) devuelve texto formateado y **descarta** la metadata de los
-chunks (sección, página, score).
-
-**Fix (3 piezas):**
-1. `rag.py`: función que devuelva texto + evidencia
-   (`{seccion, pagina, fuente, score, preview}`); `buscar_clausulas` queda como
-   wrapper.
-2. `agent.py`: campo `evidencia` en el estado (reducer `operator.add`) que cada
-   nodo alimenta (clasificación, ruteo, tool, chunks, dictamen).
-3. `app.py`: `st.expander("Cómo llegué a esto")` por turno con pestañas
-   Razonamiento / Tools / Chunks; traza del último turno en el sidebar.
+| Tarea | Estado |
+|---|---|
+| Unificar `ONBOARDING.md` y `SETUP.md` | ⏳ |
+| Paquete para el profesor con la menor fricción posible: key de Groq de una cuenta nueva dedicada a la entrega (con 1-2 meses de vida, y revocarla después), instalación desde `requirements-lock.txt`, un script de instalación de un solo comando y la base vectorial ya armada | ⏳ |
+| Probar la instalación desde cero siguiendo solo las instrucciones escritas | ⏳ |
 
 ---
 
-## BAJA — Higiene técnica
-
-### B1. Tuning de chunking y retrieval
-
-`CHUNK_SIZE=1000` / `CHUNK_OVERLAP=300` (`config.py:42-43`) = **30% de
-solapamiento**, alto: chunks contiguos comparten casi un tercio del texto, el
-retriever devuelve casi lo mismo dos veces e infla el contexto. Con `k=6`
-(`rag.py:203`) y chunks grandes, el problema es real.
-
-**Fix.** Medir con 800/150 o 1000/200 y comparar calidad de recuperación.
-
-### B2. Deprecations y migración de imports
-
-`langchain-community` está en sunset (lo avisa en runtime). Migrar
-`langchain_community.vectorstores.Chroma` → `langchain_chroma`
-(`pip install langchain-chroma`).
-
-**Nota sobre `RunnableWithMessageHistory`:** la cátedra lo menciona como "el
-enfoque moderno", pero con LangChain 1.x es API legacy. El camino moderno es el
-**checkpointer de LangGraph**, que el proyecto ya usa. En arquitectura de
-memoria el proyecto está alineado; RWMH solo si el docente lo pide
-explícitamente (mostrarlo como demo de LCEL, no como reemplazo).
-
-### B3. Nota sobre `EnsembleRetriever`
-
-Verificado: en `langchain` 1.4.2 **no existe** `langchain.retrievers.EnsembleRetriever`;
-la ubicación correcta es `langchain_classic.retrievers` (la que ya usa el
-proyecto). No hay nada que cambiar acá.
+El análisis original de Nicolás, con el detalle de cada mejora propuesta
+(qué falta, por qué importa y dónde tocar), está en el historial:
+`git show 8691493:PENDIENTES.md`.
