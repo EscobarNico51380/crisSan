@@ -119,7 +119,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 
 ## 7. El grafo de estado (LangGraph)
 
-**Estado** (`EstadoAgente`): `messages`, `intencion`, `patente`, `dni`,
+**Estado** (`EstadoAgente`): `messages`, `intencion`, `consulta`, `patente`, `dni`,
 `reclamo`, `datos_poliza`, `clausulas`, `exclusiones`, `dictamen`,
 `siniestro_registrado`, `reclamo_resultado`.
 
@@ -127,7 +127,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 
 | Nodo | Qué hace |
 |---|---|
-| `clasificar` | Extrae patente/DNI con **regex** + clasifica intención con LLM (`json_schema`) |
+| `clasificar` | Extrae patente/DNI con **regex** + clasifica intención con LLM (`json_schema`). Ve los últimos mensajes y devuelve además la pregunta reescrita para que se entienda sola, que es la que se usa para buscar (§15) |
 | `pedir_patente` | Pide la patente si falta |
 | `listar_polizas` | Lista las pólizas de un DNI y pide elegir |
 | `consultar_reclamo` | Consulta el estado de un reclamo por su número |
@@ -216,6 +216,7 @@ turno" (dictamen, cláusulas, etc.) se resetean en `clasificar`.
 | 21 | El entorno no era reproducible | `requirements.txt` sin versiones fijadas: `pip install` trae lo último de cada día (así se coló el bug 20) | `requirements-lock.txt` con las 139 versiones probadas |
 | 22 | Exclusión por GNC aplicada fuera de su alcance | El chunking partía por ítems numerados y cada ítem quedaba **sin el encabezado que le da ámbito**. El chunk recuperado decía sólo "5) Cuando el vehículo haya sido adaptado para GNC", sin indicar que pertenece a *Exclusiones para Robo o Hurto* | Propagar el encabezado de lista a cada ítem (numerado y con viñetas) al indexar |
 | 23 | Robo e incendio de un auto con GNC salían cubiertos, aunque el manual los excluye | La búsqueda usaba solo el texto del usuario, que no menciona el GNC: la exclusión nunca se recuperaba | Segunda búsqueda, dirigida a exclusiones, cuando el vehículo tiene GNC según la base (§14) |
+| 24 | Las preguntas de seguimiento ("¿y cuándo vence?") se clasificaban y buscaban sueltas | El clasificador y la búsqueda leían solo el último mensaje | El clasificador recibe los últimos mensajes y devuelve la pregunta reescrita, en la misma llamada al LLM (§15) |
 
 ---
 
@@ -365,3 +366,58 @@ con GNC.
 - En los casos ambiguos (granizo, cristales) el sistema hoy responde "Cubierto".
   Si el grupo decide que lo correcto es "Requiere peritaje", hay que ajustar el
   prompt del dictamen.
+
+
+---
+
+## 15. Preguntas de seguimiento
+
+### El problema
+
+El clasificador y la búsqueda en el manual leían **solo el último mensaje**.
+Una pregunta que depende de la conversación llegaba suelta:
+
+- *"¿Y cuándo vence?"*, después de consultar una póliza, se clasificaba como
+  pregunta **general** sobre el manual, no como consulta de la póliza. La
+  respuesta salía bien por casualidad: la fecha estaba en el historial.
+- *"¿Y me cubre el granizo?"* buscaba en el manual sin saber de qué póliza se
+  hablaba.
+
+### La solución
+
+El clasificador ya llamaba al LLM en cada turno. Se aprovecha esa misma
+llamada: ahora recibe los **últimos 4 mensajes** (cada uno recortado a 300
+caracteres) y, además de la intención, devuelve la pregunta **reescrita para
+que se entienda sola** (campo `consulta_autonoma` del schema, `consulta` en el
+estado). Esa versión es la que se usa para buscar en el manual. En la base de
+datos se sigue guardando el mensaje original del usuario.
+
+Se descartaron dos alternativas:
+
+| Alternativa | Por qué no |
+|---|---|
+| Una llamada extra al LLM, solo para reescribir, en todos los mensajes | Suma demora y cupo en cada turno |
+| Reescribir solo si el mensaje "parece" de seguimiento (corto, empieza con "¿y...") | Una regla fija se equivoca con frases que no previó |
+
+**Costo:** ninguna llamada extra al LLM, solo unos cientos de tokens más de
+entrada por turno. En el primer mensaje de una conversación no hay historial y
+la entrada queda igual que antes.
+
+### Un riesgo que hubo que cubrir
+
+Con el historial a la vista, una **hipótesis** después de un siniestro (*"¿y
+si hubiera sido granizo?"*) podía clasificarse como un siniestro nuevo, y el
+sistema habría **registrado un reclamo que nunca ocurrió**. El prompt del
+clasificador ahora aclara que "siniestro" es solo un hecho que ocurrió; una
+hipótesis es una consulta.
+
+### Resultados
+
+| Conversación | Intención | Pregunta reescrita | Resultado |
+|---|---|---|---|
+| *¿Qué plan tengo para la patente AB123CD?* → *Y cuando vence?* | `consulta` (antes: `general`) | *¿Cuándo vence la póliza de la patente AB123CD?* | ✅ |
+| *¿Qué plan tengo para la patente AF987XX?* → *y me cubre el granizo?* | `consulta` | *¿Me cubre el granizo la póliza de la patente AF987XX?* | ✅ cita la cláusula del granizo |
+| *Choque contra un poste con la AF987XX* → *y si hubiera sido granizo?* | `consulta` | *¿Estaría cubierto mi vehículo si el daño hubiera sido causado por granizo?* | ✅ no registró ningún reclamo |
+
+Se repitió además la batería del GNC (§14) para verificar que el clasificador
+nuevo no cambiara los dictámenes.

@@ -43,6 +43,14 @@ CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 300
 
 
+# --- Historial que ve el clasificador -----------------------------------------
+# Mensajes previos que recibe para entender las preguntas de seguimiento
+# ("¿y cuándo vence?"). Cada uno se recorta a HISTORIAL_CLASIFICADOR_CHARS para
+# no gastar tokens en respuestas largas con cláusulas.
+HISTORIAL_CLASIFICADOR = 4
+HISTORIAL_CLASIFICADOR_CHARS = 300
+
+
 def ensure_dirs() -> None:
     """Crea las carpetas de datos si todavía no existen."""
     DATA_DIR.mkdir(exist_ok=True)

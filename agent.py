@@ -32,7 +32,7 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 import database
-from config import LLM_MODEL
+from config import HISTORIAL_CLASIFICADOR, HISTORIAL_CLASIFICADOR_CHARS, LLM_MODEL
 from rag import buscar_exclusiones
 from tools import (
     consultar_clausulas_poliza,
@@ -174,6 +174,7 @@ CLAVES_GNC = ("gnc", "gas natural comprimido")
 class EstadoAgente(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]  # historial
     intencion: str  # consulta | siniestro | general | charla
+    consulta: str  # mensaje reescrito para entenderse sin el historial
     patente: str  # patente extraída (persistente entre turnos)
     dni: str  # DNI del titular (si lo menciona)
     reclamo: str  # número de reclamo (persistente entre turnos)
@@ -207,6 +208,14 @@ class AnalisisEntrada(BaseModel):
         default=None,
         description="DNI del titular (8 dígitos) si aparece",
     )
+    consulta_autonoma: str = Field(
+        default="",
+        description=(
+            "El MENSAJE A CLASIFICAR reescrito para que se entienda sin el "
+            "historial: incorporá la patente, el tipo de siniestro o el tema "
+            "que se venía hablando. Si ya se entiende solo, copialo igual."
+        ),
+    )
 
 
 class DictamenSiniestro(BaseModel):
@@ -236,6 +245,13 @@ PROMPT_CLASIFICAR = (
     "- 'general': pregunta genérica sobre el manual/coberturas, sin su póliza.\n"
     "- 'charla': saludo, agradecimiento o texto trivial.\n"
     "Regla: si menciona patente o DNI → 'consulta' (salvo que reporte un hecho → 'siniestro').\n"
+    "Si hay HISTORIAL RECIENTE, usalo para entender a qué se refiere el mensaje "
+    "('¿y cuándo vence?' después de hablar de una póliza es 'consulta'), pero "
+    "clasificá SOLO el MENSAJE A CLASIFICAR.\n"
+    "'siniestro' es sólo un hecho que OCURRIÓ. Una hipótesis ('¿y si hubiera "
+    "sido granizo?', '¿me cubriría si...?') es 'consulta' si hay una póliza en "
+    "juego, o 'general' si no.\n"
+    "Además devolvé el mensaje reescrito para que se entienda sin el historial.\n"
     "Respondé SOLO con la estructura pedida, sin texto adicional."
 )
 
@@ -279,6 +295,32 @@ PROMPT_DICTAMEN = (
 # ---------------------------------------------------------------------------
 # Nodos
 # ---------------------------------------------------------------------------
+def _entrada_clasificador(mensajes: list[AnyMessage]) -> str:
+    """Arma lo que ve el clasificador: el mensaje actual y, si hay, los previos.
+
+    Con el historial el clasificador entiende las preguntas de seguimiento y
+    puede reescribirlas completas. Se aprovecha la llamada al LLM que ya se
+    hacía para clasificar, así que no suma llamadas. En el primer mensaje de
+    la conversación no hay historial y la entrada queda igual que antes.
+    """
+    actual = mensajes[-1].content
+    previos = mensajes[:-1][-HISTORIAL_CLASIFICADOR:]
+    if not previos:
+        return actual
+    lineas = []
+    for m in previos:
+        quien = "Usuario" if isinstance(m, HumanMessage) else "Asistente"
+        texto = " ".join(extraer_texto(m.content).split())
+        if len(texto) > HISTORIAL_CLASIFICADOR_CHARS:
+            texto = texto[:HISTORIAL_CLASIFICADOR_CHARS] + "…"
+        lineas.append(f"{quien}: {texto}")
+    return (
+        "HISTORIAL RECIENTE (para entender el mensaje, no para clasificarlo):\n"
+        + "\n".join(lineas)
+        + f"\n\nMENSAJE A CLASIFICAR:\n{actual}"
+    )
+
+
 def nodo_clasificar(state: EstadoAgente) -> dict:
     mensaje = state["messages"][-1].content
 
@@ -294,15 +336,20 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
     try:
         resultado: AnalisisEntrada = invocar_con_reintentos(
             clasificador.invoke,
-            [SystemMessage(content=PROMPT_CLASIFICAR), HumanMessage(content=mensaje)],
+            [
+                SystemMessage(content=PROMPT_CLASIFICAR),
+                HumanMessage(content=_entrada_clasificador(state["messages"])),
+            ],
         )
         intencion = resultado.intencion
+        consulta = (resultado.consulta_autonoma or "").strip() or mensaje
         patente = patente_regex or (resultado.patente or "")
         dni = dni_regex or (resultado.dni or "")
     except Exception:  # noqa: BLE001
         # Fallback determinístico ante un fallo del LLM: si hay patente en el
         # texto, asumimos consulta; si no, charla. Mejor que romper la app.
         intencion = "consulta" if patente_regex else "charla"
+        consulta = mensaje
         patente = patente_regex or ""
         dni = dni_regex or ""
 
@@ -328,6 +375,7 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
     # una consulta anterior contaminando la respuesta actual.
     return {
         "intencion": intencion,
+        "consulta": consulta,
         "patente": patente,
         "dni": dni,
         "reclamo": reclamo,
@@ -371,8 +419,10 @@ def nodo_consultar_poliza(state: EstadoAgente) -> dict:
 
 
 def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
-    mensaje = state["messages"][-1].content
-    resultado = consultar_clausulas_poliza.invoke({"consulta": mensaje})
+    # Buscamos con la versión reescrita por el clasificador: un seguimiento
+    # como "¿y con granizo?" suelto recupera cláusulas al azar.
+    consulta = state.get("consulta") or state["messages"][-1].content
+    resultado = consultar_clausulas_poliza.invoke({"consulta": consulta})
 
     # Segunda búsqueda, dirigida a las exclusiones que dependen del vehículo.
     # Sin ella el dictamen cubría un robo o un incendio de un auto con GNC,
@@ -399,6 +449,13 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     precedentes = consultar_siniestros_previos.invoke(
         {"limite": 5, "patente": state.get("patente", "")}
     )
+    # Si el mensaje dependía del historial, sumamos la versión reescrita para
+    # que el perito sepa de qué hecho se habla. En la base se guarda el
+    # mensaje original (nodo_registrar).
+    relato = mensaje
+    consulta = state.get("consulta", "")
+    if consulta and consulta.strip() != mensaje.strip():
+        relato += f"\n(Reformulado con el contexto de la conversación: {consulta})"
     seccion_exclusiones = ""
     if state.get("exclusiones"):
         seccion_exclusiones = (
@@ -411,7 +468,7 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
         f"--- CLÁUSULAS DEL MANUAL ---\n{state['clausulas']}\n\n"
         f"{seccion_exclusiones}"
         f"--- RESOLUCIONES PREVIAS (precedentes) ---\n{precedentes}\n\n"
-        f"--- RELATO DEL USUARIO ---\n{mensaje}"
+        f"--- RELATO DEL USUARIO ---\n{relato}"
     )
     dictaminador = llm.with_structured_output(DictamenSiniestro, method="json_schema")
     resultado: DictamenSiniestro = invocar_con_reintentos(
