@@ -26,7 +26,7 @@ No hace falta notebook.
 | El robo y el incendio de un auto con GNC salían cubiertos | ✅ | `5363974` |
 | Las preguntas de seguimiento ("¿y cuándo vence?") se interpretaban sueltas | ✅ | `881329f` |
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
-| Al saludar, responde pidiendo la patente | ✅ | (este commit) |
+| Al saludar, responde pidiendo la patente | ✅ | `7e42d4f` |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
 ## Features
@@ -37,7 +37,8 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Feature | Estado | Notas |
 |---|---|---|
 | Costo estimado de cada consulta, visible en el chat | ✅ | `4906c02` |
-| Más autos de prueba en la base | ⏳ En curso | Hoy el único auto con GNC es también el único C+, así que las pruebas no separan el efecto del producto del efecto del GNC |
+| Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | (este commit) |
+| Terminar la prueba con los autos nuevos: plan A, plan B, póliza impaga y póliza vencida | ⏳ Cortada por el cupo diario de Groq | Pasaron los 2 casos de GNC; faltan 5. Sospecha: la póliza vencida no se detecta, porque el dictamen no tiene una regla para eso ni conoce la fecha de hoy |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | ⏳ | Lo pide la cátedra: *"el modelo es un componente intercambiable"*. Conviene antes de las imágenes, que usan un segundo modelo |
 | Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |

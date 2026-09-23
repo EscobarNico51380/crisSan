@@ -568,3 +568,47 @@ de razonamiento.
 Un dictamen cuesta unos US$ 0,002: **unos 500 dictámenes por dólar**. Con el
 cupo gratuito de 200.000 tokens diarios alcanza para unos 20 dictámenes o 45
 consultas por día.
+
+
+---
+
+## 18. Datos de prueba
+
+La base se crea sola con datos sintéticos (`database.inicializar_base`). Cada
+auto está pensado para probar **una sola cosa**: con los dos autos originales
+no alcanzaba, porque el único con GNC era también el único C+ y no se podía
+saber cuál de las dos cosas causaba un rechazo.
+
+| Patente | Auto | Titular (DNI) | Póliza | Qué prueba |
+|---|---|---|---|---|
+| AB123CD | Ford Focus 2024 | Carlos Perez (39123456) | Todo riesgo (`D c/fran`), franquicia fija $460.000 | Caso base: cubre casi todo |
+| AF987XX | Peugeot 208 2012, **con GNC** | Carlos Perez (39123456) | C+ | Exclusiones por GNC (robo e incendio) |
+| AC456BD | VW Gol Trend 2018 | Laura Gomez (30555777) | C+, **sin GNC** | El robo se cubre: el rechazo del AF987XX es por el GNC, no por el plan |
+| AD789EF | Chevrolet Cruze 2022, **con GNC** | Laura Gomez (30555777) | Todo riesgo | La exclusión por GNC se aplica aun con el mejor plan |
+| AE321GH | Fiat Uno 2008 | Laura Gomez (30555777) | Plan A (solo daños a terceros) | Un daño al propio auto se rechaza |
+| AG654JK | Renault Kangoo 2015 | Martin Diaz (28444666) | Plan B (daños totales) | El robo total se cubre; un daño parcial, no |
+| AH111LM | Toyota Etios 2019 | Martin Diaz (28444666) | C+, **impaga** | Cualquier siniestro se rechaza |
+| AJ222NP | Honda Fit 2014 | Martin Diaz (28444666) | C+, **vencida** en junio de 2026 | Cualquier siniestro se rechaza |
+
+Las bases que ya existían incorporan los autos nuevos en el próximo arranque
+(los inserts son `INSERT OR IGNORE`).
+
+### Resultados
+
+Con la tabla `siniestros` vacía, para que no influyan precedentes de pruebas
+anteriores:
+
+| Pregunta | Esperado | Resultado |
+|---|---|---|
+| *Me robaron el auto AC456BD* (C+ sin GNC) | Cubierto | ✅ Cubierto |
+| *Me robaron el auto AD789EF* (todo riesgo con GNC) | Rechazado | ✅ Rechazado, citando las exclusiones por GNC |
+| *Choque contra un poste con la AE321GH, se abollo la puerta* (plan A) | Rechazado | Pendiente |
+| *Me robaron el auto AG654JK* (plan B) | Cubierto | Pendiente |
+| *Choque contra un poste con la AG654JK, se abollo la puerta* (plan B) | Rechazado | Pendiente |
+| *Me robaron el auto AH111LM* (impaga) | Rechazado | Pendiente |
+| *Me robaron el auto AJ222NP* (vencida) | Rechazado | Pendiente |
+
+Los dos primeros confirman lo que no se podía demostrar con un solo auto con
+GNC: con el mismo plan y sin GNC el robo se cubre, y con GNC se rechaza incluso
+con el mejor plan. Los cinco restantes no llegaron a correr: se agotó el cupo
+diario de tokens de Groq (cada dictamen usa unos 9.000).

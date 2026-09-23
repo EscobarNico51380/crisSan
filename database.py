@@ -120,6 +120,53 @@ def inicializar_base() -> None:
         "'Al dia', '2026-06-01', '2027-06-01')"
     )
 
+    # --- Autos de prueba adicionales ------------------------------------------
+    # Cada uno aísla UNA variable. Con los dos autos de arriba no alcanzaba: el
+    # único con GNC era también el único C+, y no se podía saber cuál de las
+    # dos cosas causaba un rechazo.
+    cur.executemany(
+        "INSERT OR IGNORE INTO clientes VALUES (?, ?, ?, ?, ?)",
+        [
+            ("30555777", "Laura Gomez", "laura@mail.com", "3425550000", "Santa Fe"),
+            ("28444666", "Martin Diaz", "martin@mail.com", "3415559876", "Rosario"),
+        ],
+    )
+    cur.executemany(
+        "INSERT OR IGNORE INTO vehiculos VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            # patente, marca, modelo, año, categoría, uso, GNC, rastreador
+            ("AC456BD", "Volkswagen", "Gol Trend", 2018, "Automovil", "Particular", 0, 0),
+            ("AD789EF", "Chevrolet", "Cruze", 2022, "Automovil", "Particular", 1, 1),
+            ("AE321GH", "Fiat", "Uno", 2008, "Automovil", "Particular", 0, 0),
+            ("AG654JK", "Renault", "Kangoo", 2015, "Utilitario", "Particular", 0, 0),
+            ("AH111LM", "Toyota", "Etios", 2019, "Automovil", "Particular", 0, 0),
+            ("AJ222NP", "Honda", "Fit", 2014, "Automovil", "Particular", 0, 0),
+        ],
+    )
+    cur.executemany(
+        "INSERT OR IGNORE INTO polizas VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            # C+ SIN GNC: el robo se cubre. Contrasta con AF987XX (C+ con GNC).
+            ("POL-1003", "30555777", "AC456BD", "C+", 9000000.0,
+             "Sin Franquicia", 0.0, "Al dia", "2026-03-01", "2027-03-01"),
+            # Todo riesgo CON GNC: la exclusión se aplica aun con el mejor plan.
+            ("POL-1004", "30555777", "AD789EF", "D c/fran", 30000000.0,
+             "Fija", 460000.0, "Al dia", "2026-02-01", "2027-02-01"),
+            # Plan A (solo responsabilidad civil): no cubre daños al propio auto.
+            ("POL-1005", "30555777", "AE321GH", "A", 4000000.0,
+             "Sin Franquicia", 0.0, "Al dia", "2026-05-01", "2027-05-01"),
+            # Plan B (daños totales): cubre robo total, no daños parciales.
+            ("POL-1006", "28444666", "AG654JK", "B", 11000000.0,
+             "Sin Franquicia", 0.0, "Al dia", "2026-04-01", "2027-04-01"),
+            # Póliza IMPAGA: cualquier siniestro se rechaza.
+            ("POL-1007", "28444666", "AH111LM", "C+", 14000000.0,
+             "Sin Franquicia", 0.0, "Impaga", "2026-01-15", "2027-01-15"),
+            # Póliza VENCIDA (junio de 2026): cualquier siniestro se rechaza.
+            ("POL-1008", "28444666", "AJ222NP", "C+", 8000000.0,
+             "Sin Franquicia", 0.0, "Al dia", "2025-06-01", "2026-06-01"),
+        ],
+    )
+
     conn.commit()
     conn.close()
 
