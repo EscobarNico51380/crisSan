@@ -613,3 +613,46 @@ Los dos primeros confirman lo que no se podía demostrar con un solo auto con
 GNC: con el mismo plan y sin GNC el robo se cubre, y con GNC se rechaza incluso
 con el mejor plan. Los cinco restantes no llegaron a correr: se agotó el cupo
 diario de tokens de Groq (cada dictamen usa unos 9.000).
+
+
+---
+
+## 19. Prueba con el modelo chico (`gpt-oss-20b`)
+
+Con el cupo diario de `gpt-oss-120b` agotado, se corrieron las dos baterías
+(las 6 preguntas del GNC y las 7 de los autos de prueba) con `gpt-oss-20b`,
+que tiene su propio cupo. El código no cambió: el modelo se reemplazó solo
+dentro del script de prueba. Antes de cada batería se vació la tabla
+`siniestros`, y al terminar se restauró la base.
+
+| Pregunta | Esperado | `gpt-oss-120b` | `gpt-oss-20b` |
+|---|---|---|---|
+| *Me cayo granizo sobre la AF987XX* (GNC) | Ambiguo | Cubierto | **Rechazado** |
+| *Me rompieron el parabrisas de la AF987XX* (GNC) | Ambiguo | Cubierto | Cubierto |
+| *Se incendio por completo la AF987XX* (GNC) | Rechazado | ✅ | ✅ |
+| *Me robaron el auto AF987XX* (GNC) | Rechazado | ✅ | ✅ |
+| *Me cayo granizo sobre la AB123CD* | Cubierto | ✅ | ✅ |
+| *Me robaron el auto AB123CD* | Cubierto | ✅ | ✅ |
+| *Me robaron el auto AC456BD* (C+ sin GNC) | Cubierto | ✅ | ✅ |
+| *Me robaron el auto AD789EF* (todo riesgo con GNC) | Rechazado | ✅ | ✅ |
+| *Choque contra un poste con la AE321GH…* (plan A) | Rechazado | sin correr (cupo) | ✅ |
+| *Me robaron el auto AG654JK* (plan B) | Cubierto | sin correr (cupo) | ✅ |
+| *Choque contra un poste con la AG654JK…* (plan B) | Rechazado | sin correr (cupo) | ✅ |
+| *Me robaron el auto AH111LM* (impaga) | Rechazado | sin correr (cupo) | ✅ |
+| *Me robaron el auto AJ222NP* (vencida) | Rechazado | sin correr (cupo) | ❌ **Cubierto** |
+
+**Conclusiones:**
+
+- **El modelo chico es un respaldo viable:** coincide con el grande en todos
+  los casos claros.
+- **Donde el manual es ambiguo, la respuesta depende del modelo.** Ante el
+  granizo sobre un auto con GNC, el modelo chico leyó la lista general de
+  exclusiones al pie de la letra (*"una exclusión general que excluye cualquier
+  siniestro cuando el vehículo está adaptado…"*) e ignoró la salvedad del
+  "excepto". Mientras el grupo no decida qué respuesta es la correcta y la
+  escriba como regla, el resultado no es estable.
+- **La póliza vencida sale cubierta.** No es un problema del modelo chico sino
+  del sistema: el reclamo se registró con la fecha de hoy (el modelo la conoce)
+  y la póliza tenía el vencimiento a la vista, pero el prompt del dictamen no
+  tiene ninguna regla sobre la vigencia, y el modelo no las comparó. En el
+  fundamento escribió *"la póliza está al día"*, que se refiere al pago.

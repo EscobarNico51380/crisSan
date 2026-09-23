@@ -27,7 +27,8 @@ No hace falta notebook.
 | Las preguntas de seguimiento ("¿y cuándo vence?") se interpretaban sueltas | ✅ | `881329f` |
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
 | Al saludar, responde pidiendo la patente | ✅ | `7e42d4f` |
-| Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | (este commit) |
+| Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | `333af5d` |
+| Una póliza vencida sale cubierta | ⏳ Confirmado con el modelo chico | El dictamen no tiene ninguna regla sobre la vigencia |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
 ## Features
@@ -39,7 +40,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 |---|---|---|
 | Costo estimado de cada consulta, visible en el chat | ✅ | `4906c02` |
 | Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | `a7f8f3f` |
-| Terminar la prueba con los autos nuevos: plan A, plan B, póliza impaga y póliza vencida | ⏳ Cortada por el cupo diario de Groq | Pasaron los 2 casos de GNC; faltan 5. Sospecha: la póliza vencida no se detecta, porque el dictamen no tiene una regla para eso ni conoce la fecha de hoy |
+| Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ⏳ | Con el modelo chico ya pasaron 4 de 5; falló la póliza vencida (ver Problemas) |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | ⏳ | Lo pide la cátedra: *"el modelo es un componente intercambiable"*. Conviene antes de las imágenes, que usan un segundo modelo |
 | Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |
@@ -58,7 +59,9 @@ el agente ReAct y las imágenes se apoyan en eso.
   general de exclusiones incluye el GNC, pero con la salvedad "excepto que la
   cobertura incluya alguno de los puntos enumerados". Hoy el sistema responde
   "Cubierto"; la otra lectura defendible es "Requiere peritaje". Tiene que
-  coincidir con lo que se diga en la defensa.
+  coincidir con lo que se diga en la defensa. **Además hay que escribirlo como
+  regla en el prompt:** con el modelo chico el mismo caso sale "Rechazado", así
+  que hoy la respuesta depende del modelo.
 
 ## Entregables
 
