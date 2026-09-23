@@ -221,6 +221,7 @@ se mantiene acotado con una ventana + resumen (§16).
 | 23 | Robo e incendio de un auto con GNC salían cubiertos, aunque el manual los excluye | La búsqueda usaba solo el texto del usuario, que no menciona el GNC: la exclusión nunca se recuperaba | Segunda búsqueda, dirigida a exclusiones, cuando el vehículo tiene GNC según la base (§14) |
 | 24 | Las preguntas de seguimiento ("¿y cuándo vence?") se clasificaban y buscaban sueltas | El clasificador y la búsqueda leían solo el último mensaje | El clasificador recibe los últimos mensajes y devuelve la pregunta reescrita, en la misma llamada al LLM (§15) |
 | 25 | El historial que se mandaba al LLM crecía sin límite | El nodo que responde enviaba toda la conversación en cada turno | Ventana + resumen: al llegar a 12 mensajes se resumen los viejos y quedan los últimos 6 (§16) |
+| 26 | Al decir "Hola" respondía "No dispongo de la información necesaria… indicame tu patente" | Un saludo se clasifica como charla y llega al nodo que responde sin contexto; en ese caso se le agregaba la advertencia anti-alucinación pensada para consultas sin datos ("decí que no podés responder y pedí patente o DNI"). "Hola, ¿de qué sirve este chat?" andaba bien por casualidad: se clasificaba como pregunta general, buscaba en el manual y llegaba con contexto | Para la charla, una instrucción propia: saludar, presentarse, contar qué puede hacer, y avisar con amabilidad si el tema no es de seguros. La advertencia queda para los demás casos sin contexto |
 
 ---
 

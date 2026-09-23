@@ -26,7 +26,7 @@ No hace falta notebook.
 | El robo y el incendio de un auto con GNC salían cubiertos | ✅ | `5363974` |
 | Las preguntas de seguimiento ("¿y cuándo vence?") se interpretaban sueltas | ✅ | `881329f` |
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
-| Al saludar, responde pidiendo la patente | ⏳ Antes del video | |
+| Al saludar, responde pidiendo la patente | ✅ | (este commit) |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
 ## Features

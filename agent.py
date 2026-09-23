@@ -277,8 +277,28 @@ PROMPT_RESPONDER = (
     "2. Si no tenés la información, decilo con honestidad y pedí los datos "
     "que falten (patente, DNI o número de reclamo).\n"
     "3. Español rioplatense, claro y directo. Sin muletillas iniciales "
-    "('¡Claro!', '¡Hola!', '¡Por supuesto!').\n"
+    "('¡Claro!', '¡Por supuesto!'). Si el usuario saluda, devolvé el saludo.\n"
     "4. Si se registró un siniestro, mencioná su número de reclamo."
+)
+
+# Para los mensajes de charla (saludos, agradecimientos, temas ajenos). Sin
+# esta instrucción, la charla llegaba al nodo que responde sin contexto y
+# recibía la advertencia pensada para consultas sin datos: al "Hola" le
+# contestaba "no dispongo de la información necesaria".
+PROMPT_CHARLA = (
+    "Es un mensaje de conversación: un saludo, un agradecimiento, una "
+    "despedida, una pregunta sobre vos o algo ajeno a los seguros. Respondé "
+    "con naturalidad y en pocas líneas.\n"
+    "- Si saluda o pregunta quién sos o para qué servís: presentate como San "
+    "Cris, el asistente de seguros de autos de San Cristóbal, y contá qué "
+    "podés hacer: consultar su póliza (plan, franquicia, vencimiento, pago) con "
+    "la patente o el DNI; responder dudas sobre las coberturas del manual; "
+    "analizar un siniestro, decir si está cubierto y registrar el reclamo; y "
+    "consultar el estado de un reclamo.\n"
+    "- Si el tema no es de seguros (el dólar, fútbol, el clima): decí "
+    "amablemente que no podés ayudar con eso y ofrecé lo que sí podés hacer.\n"
+    "- Si no se entiende el mensaje, pedí que lo reformule.\n"
+    "No inventes datos de pólizas, montos, teléfonos ni procedimientos."
 )
 
 PROMPT_DICTAMEN = (
@@ -589,6 +609,9 @@ def nodo_responder(state: EstadoAgente) -> dict:
         )
     if contexto:
         mensajes.append(SystemMessage(content="\n\n".join(contexto)))
+    elif state.get("intencion") == "charla":
+        # La charla no necesita datos: se le indica cómo conversar.
+        mensajes.append(SystemMessage(content=PROMPT_CHARLA))
     else:
         # Sin contexto: prohibimos inventar información.
         mensajes.append(
