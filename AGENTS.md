@@ -120,6 +120,10 @@ precedentes y sesgan los dictámenes siguientes.
 - **Las exclusiones del manual dependen de su encabezado** (ej. el GNC excluye
   robo e incendio, no todo). Por eso cada fragmento lleva el título de su lista,
   y las exclusiones por características del vehículo se buscan aparte.
+- **Errores `No module named 'torchvision'` en la consola de Streamlit:** son
+  ruido, no rompen nada. Los genera el vigilante de archivos de Streamlit al
+  inspeccionar módulos de imágenes de `transformers` que no se usan. Ver
+  `PENDIENTES.md`.
 - **Consola de Windows:** usar `PYTHONIOENCODING=utf-8` si fallan los acentos.
 
 ---

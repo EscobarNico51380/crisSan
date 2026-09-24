@@ -31,6 +31,7 @@ No hace falta notebook.
 | Al consultar un reclamo respondía solo "está en estado Iniciado" | ✅ La ficha completa la arma el código, sin el LLM | `469418c`, `35fbdc5` |
 | Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | `a48070e` |
 | "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ⏳ Visto con el modelo chico | Revisar con el principal |
+| La consola de Streamlit muestra decenas de errores *"No module named 'torchvision'"* | ⏳ Diagnosticado, sin acción por ahora | No rompe nada: el vigilante de archivos de Streamlit inspecciona todos los módulos cargados, y ~100 módulos de imágenes de `transformers` (que no usamos) fallan al cargarse sin `torchvision`. Streamlit atrapa cada error y sigue. Reproducido fuera de Streamlit: 102 módulos fallan. Probablemente es lo que vio Nicolás y por lo que instaló `torchvision` (no una diferencia de Linux): preguntarle. Arreglo propuesto: `fileWatcherType = "none"` en `.streamlit/config.toml`; si se confirma, sacar `torchvision` también de Linux |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
 ## Features
