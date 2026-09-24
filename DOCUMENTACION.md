@@ -262,6 +262,7 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - ✅ Manejo de rate limits con reintentos.
 - ✅ Costo estimado de cada turno y de la conversación, visible en el chat.
 - ✅ Modelo de respaldo automático cuando el principal agota su cupo diario.
+- ✅ Recorrido sugerido en la web: 10 consultas en orden, cada una con un botón, que muestran las funciones del sistema.
 
 ## 13. Limitaciones y mejoras futuras
 
@@ -766,3 +767,40 @@ el modelo interpreta el manual.
 **Observación:** con la frase *"Me robaron el auto AJ222NP el 10 de mayo de
 2026"*, el modelo chico la clasificó como consulta y no como denuncia, y no
 llegó al dictamen. Hay que revisar si con el modelo principal pasa lo mismo.
+
+
+---
+
+## 22. Recorrido sugerido en la web
+
+Para compensar que la entrega no es un notebook, la barra lateral del chat
+ofrece un **recorrido sugerido**: diez consultas en orden, cada una con un
+botón. Al tocarlo, la consulta se envía como si se hubiera escrito, y debajo de
+cada botón se explica qué muestra. El chat sigue disponible para escribir
+cualquier otra consulta.
+
+| Paso | Consulta | Qué muestra |
+|---|---|---|
+| 1 | *Hola, ¿quién sos?* | Charla: se presenta y cuenta qué puede hacer |
+| 2 | *¿Qué plan tengo para la patente AB123CD?* | Consulta la póliza en la base de datos |
+| 3 | *¿Y cuándo vence?* | Memoria: sigue hablando del mismo auto |
+| 4 | *¿Qué cubre el granizo?* | Busca en el manual de la póliza (RAG) |
+| 5 | *Choqué contra un poste con la AB123CD, se abolló la puerta* | Dictamen cubierto con franquicia y registro del reclamo |
+| 6 | *¿En qué estado está mi reclamo?* | Consulta el reclamo recién registrado |
+| 7 | *Me robaron el auto AC456BD* | Robo con plan C+ sin GNC: cubierto |
+| 8 | *Me robaron el auto AF987XX* | Mismo robo y mismo plan, con GNC: rechazado por una exclusión del manual |
+| 9 | *Me robaron el auto AJ222NP* | Póliza vencida: la rechaza un control del sistema, sin el LLM |
+| 10 | *Mi DNI es 30555777* | Busca por DNI y lista las pólizas |
+
+El recorrido completo usa unos 60.000 tokens (cuatro dictámenes de ~9.000 y
+seis consultas más livianas), menos de un tercio del cupo diario del modelo
+principal.
+
+Se descartaron dos alternativas: una pestaña aparte con tarjetas explicativas
+(obliga a ir y venir entre la pestaña y el chat) y una reproducción automática
+de todo el recorrido (el profesor mira de forma pasiva y se gasta mucho cupo de
+una vez).
+
+**Prueba:** con un agente simulado (sin gastar API), los botones envían
+exactamente su consulta, en el orden en que se tocan, y se combinan con las
+consultas escritas a mano.

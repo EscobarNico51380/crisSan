@@ -28,7 +28,7 @@ No hace falta notebook.
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
 | Al saludar, responde pidiendo la patente | ✅ | `7e42d4f` |
 | Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | `333af5d` |
-| Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | (este commit) |
+| Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | `a48070e` |
 | "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ⏳ Visto con el modelo chico | Revisar con el principal |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
@@ -40,6 +40,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Feature | Estado | Notas |
 |---|---|---|
 | Costo estimado de cada consulta, visible en el chat | ✅ | `4906c02` |
+| Recorrido sugerido en la web: botones con las consultas recomendadas | ✅ | (este commit) |
 | Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | `a7f8f3f` |
 | Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ⏳ | Con el modelo chico ya pasaron 4 de 5; falló la póliza vencida (ver Problemas) |
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |

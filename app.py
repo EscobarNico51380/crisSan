@@ -15,6 +15,32 @@ from langchain_core.messages import HumanMessage
 import costos
 from config import GROQ_API_KEY, LLM_MODEL, LLM_MODELO_RESPALDO
 
+# Recorrido sugerido: consultas pensadas para mostrar, en orden, lo que hace el
+# sistema. Cada una se envía con un botón de la barra lateral. Las que dependen
+# de la anterior (la memoria, el estado del reclamo) están justo después.
+RECORRIDO = [
+    ("Hola, ¿quién sos?", "Charla: se presenta y cuenta qué puede hacer."),
+    ("¿Qué plan tengo para la patente AB123CD?", "Consulta la póliza en la base de datos."),
+    ("¿Y cuándo vence?", "Memoria: entiende que se sigue hablando del mismo auto."),
+    ("¿Qué cubre el granizo?", "Busca la respuesta en el manual de la póliza (RAG)."),
+    (
+        "Choqué contra un poste con la AB123CD, se abolló la puerta",
+        "Dictamen: todo riesgo, cubierto con franquicia. Registra el reclamo.",
+    ),
+    ("¿En qué estado está mi reclamo?", "Consulta el reclamo recién registrado."),
+    ("Me robaron el auto AC456BD", "Robo con plan C+ y sin GNC: cubierto."),
+    (
+        "Me robaron el auto AF987XX",
+        "El mismo robo y el mismo plan, pero el auto tiene GNC: rechazado por una "
+        "exclusión del manual.",
+    ),
+    (
+        "Me robaron el auto AJ222NP",
+        "Póliza vencida: la rechaza un control del sistema, sin el LLM.",
+    ),
+    ("Mi DNI es 30555777", "Busca por DNI y lista las pólizas de la titular."),
+]
+
 st.set_page_config(page_title="San Cris", page_icon="🚗", layout="centered")
 
 
@@ -59,15 +85,17 @@ with st.sidebar:
     costo_total = st.empty()
     st.caption(costos.ACLARACION)
     st.divider()
-    st.markdown("**Probá con estos ejemplos:**")
-    ejemplos = [
-        "Hola, ¿quién sos?",
-        "¿Qué plan tengo para la patente AB123CD?",
-        "Choqué contra un poste con la AF987XX, ¿me cubre?",
-        "Me robaron el auto AB123CD, ¿me cubre?",
-    ]
-    for ejemplo in ejemplos:
-        st.markdown(f"- {ejemplo}")
+    st.markdown("**Recorrido sugerido**")
+    st.caption(
+        "Tocá cada paso, en orden, para enviar esa consulta. También podés "
+        "escribir la tuya en cualquier momento. El recorrido completo usa unos "
+        "60.000 tokens."
+    )
+    for n, (pregunta, que_muestra) in enumerate(RECORRIDO, 1):
+        if st.button(f"{n}. {pregunta}", key=f"recorrido-{n}", use_container_width=True):
+            # Se envía como si se hubiera escrito (ver el chat_input de abajo).
+            st.session_state.pendiente = pregunta
+        st.caption(que_muestra)
     st.divider()
     if st.button("Reiniciar conversación", use_container_width=True):
         st.session_state.messages = []
@@ -98,7 +126,11 @@ for mensaje in st.session_state.messages:
             st.caption(mensaje["costo"])
 
 # Entrada del usuario.
-if prompt := st.chat_input("Escribí tu consulta sobre tu póliza..."):
+# La consulta llega escrita en el chat o desde un botón del recorrido sugerido.
+pregunta_del_recorrido = st.session_state.pop("pendiente", None)
+if prompt := (
+    st.chat_input("Escribí tu consulta sobre tu póliza...") or pregunta_del_recorrido
+):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
