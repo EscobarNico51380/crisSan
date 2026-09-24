@@ -846,7 +846,9 @@ corta, volver a ejecutarlo retoma desde donde quedó.
 | Todo queda dentro de la carpeta | El modelo de embeddings se redirige a `data/modelos` (variable `HF_HOME`) y pip instala sin caché. Para desinstalar, alcanza con borrar la carpeta |
 | Streamlit en modo *headless* y el navegador lo abre el script | La primera vez, Streamlit puede frenar la terminal pidiendo un email |
 | Streamlit atado a `localhost` | El chat no queda expuesto a la red y el firewall de Windows no pregunta nada. Sin esto, mostraba la IP pública |
-| En Linux, PyTorch en su versión para CPU | La versión por defecto trae varios GB de librerías de GPU que el sistema no usa. **Sin probar todavía en Linux** |
+| En Linux, PyTorch en su versión para CPU, desde el repositorio oficial de PyTorch y en un paso aparte | La versión de PyPI trae varios GB de librerías de GPU que el sistema no usa. Se instalan solo `torch` y `torchvision` con `--index-url` (únicamente ese repositorio) y `--no-deps`; todo lo demás sale únicamente de PyPI. Mezclar repositorios en un mismo comando (`--extra-index-url`) permite que un paquete llegue del repositorio equivocado: así fue el ataque a PyTorch de diciembre de 2022. Verificado que el repositorio oficial tiene `torch 2.14.0+cpu` y `torchvision 0.29.0+cpu` para Python 3.11 y 3.13, y que pip acepta `2.14.0+cpu` como `==2.14.0` del lock. **Falta correrlo entero en Linux** |
+| No se actualiza pip | El que trae Python 3.11-3.13 (25.3 en la versión probada) alcanza para el lock. Así no hay ninguna descarga sin versión fijada |
+| `pip check` al final | Verifica que todo lo instalado sea compatible entre sí |
 
 ### Pruebas
 

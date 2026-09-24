@@ -31,6 +31,8 @@ MARCA = DATA / ".instalado"
 LOCK = RAIZ / "requirements-lock.txt"
 ENV = RAIZ / ".env"
 PUERTO = 8501
+# Repositorio oficial de PyTorch, versión solo-CPU (se usa en Linux).
+PYTORCH_CPU = "https://download.pytorch.org/whl/cpu"
 
 PYTHON_PROBADO = (3, 13)
 PYTHON_COMPATIBLE = ((3, 11), (3, 13))  # rango en el que existen todas las dependencias
@@ -81,6 +83,14 @@ def en_venv(*args: str, **kwargs) -> None:
 # ---------------------------------------------------------------------------
 # Instalación (corre con el Python del sistema)
 # ---------------------------------------------------------------------------
+def requisito_del_lock(paquete: str) -> str:
+    """Devuelve "paquete==versión" tal como figura en el lock."""
+    for linea in LOCK.read_text(encoding="utf-8").splitlines():
+        if linea.startswith(f"{paquete}=="):
+            return linea.split(";")[0].strip()
+    raise SystemExit(f"{paquete} no figura en {LOCK.name}")
+
+
 def instalado() -> bool:
     return MARCA.exists() and PYTHON_VENV.exists()
 
@@ -147,16 +157,28 @@ def instalar() -> None:
         venv.create(VENV, with_pip=True)
 
     titulo("2/3 · Librerías (la parte más larga)")
-    correr([str(PYTHON_VENV), "-m", "pip", "install", "--no-cache-dir", "-q", "--upgrade", "pip"])
-    comando = [
-        str(PYTHON_VENV), "-m", "pip", "install", "--no-cache-dir",
-        "-r", str(LOCK),
-    ]
+    # No se actualiza pip: el que trae Python 3.11-3.13 alcanza, y así no hay
+    # ninguna descarga sin versión fijada.
+    pip = [str(PYTHON_VENV), "-m", "pip", "install", "--no-cache-dir"]
     if sys.platform.startswith("linux"):
-        # En Linux, PyTorch trae por defecto su versión para GPU (varios GB
-        # más). El sistema no usa GPU, así que se instala la versión CPU.
-        comando += ["--extra-index-url", "https://download.pytorch.org/whl/cpu"]
-    correr(comando)
+        # En Linux, el PyTorch de PyPI es la versión para GPU, con varios GB de
+        # librerías de NVIDIA que el sistema no usa. Se instala la versión CPU
+        # desde el repositorio oficial de PyTorch, en un paso aparte:
+        #   --index-url  usa SOLO ese repositorio (no lo mezcla con PyPI);
+        #   --no-deps    trae de ahí SOLO estos dos paquetes; sus dependencias
+        #                salen de PyPI en el paso siguiente.
+        # Así cada paquete viene de un único origen. Mezclar repositorios en un
+        # mismo comando (--extra-index-url) permite que un paquete llegue del
+        # repositorio equivocado: así fue el ataque a PyTorch de diciembre de 2022.
+        print("PyTorch, versión CPU, desde el repositorio oficial de PyTorch...")
+        correr(pip + [
+            "--index-url", PYTORCH_CPU, "--no-deps",
+            requisito_del_lock("torch"), requisito_del_lock("torchvision"),
+        ])
+    print("Librerías del proyecto, desde PyPI...")
+    correr(pip + ["-r", str(LOCK)])
+    # Verifica que todo lo instalado sea compatible entre sí.
+    correr([str(PYTHON_VENV), "-m", "pip", "check"])
 
     titulo("3/3 · Modelo de embeddings, base de datos e índice del manual")
     en_venv("--preparar")
