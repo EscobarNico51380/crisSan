@@ -81,9 +81,9 @@ el agente ReAct y las imágenes se apoyan en eso.
 
 | Tarea | Estado |
 |---|---|
-| `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | (este commit) |
-| Decidir qué hacer con `ONBOARDING.md` y `SETUP.md`, ahora que el README cubre lo que necesita el profesor | ⏳ |
-| Armar el zip de la entrega: sin `.venv` ni `data/modelos`, con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
+| `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | `d291f74` |
+| Reorganizar la documentación: se borra `ONBOARDING.md` (lo cubre el README) y `SETUP.md` pasa a ser `AGENTS.md`, la guía interna para el equipo y para asistentes de IA (`CLAUDE.md` la importa) | ✅ | (este commit) |
+| Armar el zip de la entrega: sin `.venv` ni `data/modelos`, sin los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`), con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
 | Probar la instalación desde cero con el zip, siguiendo solo el README, en Windows y en Linux | ⏳ |
 
 ---

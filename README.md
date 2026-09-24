@@ -135,6 +135,23 @@ está pensado para probar una situación distinta.
 
 ---
 
+## Qué esperar (y qué no)
+
+- **Solo conoce los clientes y las pólizas de la tabla anterior**, que son
+  ficticios. Con una patente o un DNI inventados, responde que no los encuentra;
+  no inventa pólizas.
+- **Responde sobre seguros de auto de San Cristóbal.** Si se le pregunta otra
+  cosa (el dólar, fútbol), lo aclara y ofrece lo que sí puede hacer.
+- **Para dictaminar un siniestro necesita saber de qué auto se habla.** Si la
+  patente no está en el mensaje ni en la conversación, la pide.
+- **Cada denuncia queda registrada** como reclamo, con número, y se puede
+  consultar después.
+- **El botón "Reiniciar conversación"** de la barra lateral borra la memoria de
+  la charla (y el contador de costo) y empieza una nueva. Los reclamos
+  registrados se conservan.
+
+---
+
 ## Otras formas de usarlo
 
 | Comando | Qué hace |
@@ -150,7 +167,6 @@ está pensado para probar una situación distinta.
 - [`DOCUMENTACION.md`](DOCUMENTACION.md): arquitectura, decisiones de diseño,
   las dificultades que encontramos y cómo las resolvimos, y las pruebas con sus
   resultados.
-- [`SETUP.md`](SETUP.md): instalación manual, paso a paso, para desarrollo.
 
 ---
 
