@@ -224,6 +224,7 @@ se mantiene acotado con una ventana + resumen (§16).
 | 25 | El historial que se mandaba al LLM crecía sin límite | El nodo que responde enviaba toda la conversación en cada turno | Ventana + resumen: al llegar a 12 mensajes se resumen los viejos y quedan los últimos 6 (§16) |
 | 26 | Al decir "Hola" respondía "No dispongo de la información necesaria… indicame tu patente" | Un saludo se clasifica como charla y llega al nodo que responde sin contexto; en ese caso se le agregaba la advertencia anti-alucinación pensada para consultas sin datos ("decí que no podés responder y pedí patente o DNI"). "Hola, ¿de qué sirve este chat?" andaba bien por casualidad: se clasificaba como pregunta general, buscaba en el manual y llegaba con contexto | Para la charla, una instrucción propia: saludar, presentarse, contar qué puede hacer, y avisar con amabilidad si el tema no es de seguros. La advertencia queda para los demás casos sin contexto |
 | 27 | Al agotarse el cupo diario, el chat mostraba el error crudo de la API, con el número de organización de Groq | `app.py` y `main.py` mostraban el texto de la excepción tal cual | `mensaje_para_el_usuario` lo traduce a *"El sistema no puede responder consultas en este momento. Probá de nuevo en 21 minutos."*, calculando la espera que informa la API. El detalle técnico se imprime en la terminal. Además se verificó que el cupo es **por modelo** (con `gpt-oss-120b` agotado, `gpt-oss-20b` respondía con la misma key), y se corrigió el comentario de `config.py` que decía lo contrario |
+| 28 | Una póliza vencida salía cubierta | El prompt del dictamen no pedía comparar la fecha del siniestro con la vigencia, y el modelo no lo hacía aunque tenía las dos fechas a la vista | La vigencia y el pago los controla el código después del dictamen; si no están en regla, el dictamen pasa a Rechazado con un fundamento del sistema (§21) |
 
 ---
 
@@ -709,3 +710,59 @@ su cupo diario"*, y el costo se calcula con el precio de ese modelo.
 Y con la API real, dos consultas (un saludo y una consulta de póliza) pasaron
 por el código nuevo y las respondió el principal, confirmando que el camino
 normal no cambió.
+
+
+---
+
+## 21. Vigencia y pago de la póliza: control sin LLM
+
+### El problema
+
+Una póliza vencida salía **cubierta**. En la prueba con el modelo chico, el
+reclamo se registró con la fecha correcta (el modelo conoce la fecha de hoy) y
+la póliza tenía el vencimiento a la vista, pero el prompt del dictamen no pedía
+compararlos, y el modelo no lo hizo. En el fundamento escribió *"la póliza está
+al día"*, que se refiere al pago.
+
+### La solución
+
+Comparar fechas y leer un estado guardado en la base no requiere interpretar
+nada, así que **no se le delega al modelo**: lo hace el código.
+
+1. El modelo sigue extrayendo del relato la fecha del siniestro ("ayer", "el 10
+   de mayo"). Si la fecha no es válida o es futura, se usa la de hoy.
+2. `motivo_de_rechazo_administrativo` compara esa fecha con la vigencia de la
+   póliza (`database.obtener_vigencia`) y revisa el estado de pago.
+3. Si la póliza no estaba vigente o no está paga, el dictamen pasa a
+   **Rechazado** con un fundamento escrito por el sistema, sin importar lo que
+   haya dicho el modelo.
+
+El control de pago antes lo hacía el modelo por una regla del prompt. Funcionaba,
+pero es la misma clase de verificación, así que también pasó al código.
+
+### Resultados
+
+Sin gastar API:
+
+| Situación | Resultado |
+|---|---|
+| AB123CD, al día y vigente | En regla: decide el análisis de cobertura |
+| AJ222NP, vencida el 01/06/2026, siniestro de hoy | *"La póliza POL-1008 no estaba vigente en la fecha del siniestro: venció el 01/06/2026 y el siniestro es del 23/09/2026."* |
+| AJ222NP, siniestro del 10/05/2026 (antes del vencimiento) | En regla: una denuncia tardía de algo que pasó cuando la póliza cubría |
+| AC456BD, siniestro anterior al inicio de la póliza | *"…todavía no estaba vigente en la fecha del siniestro: empezó el 01/03/2026…"* |
+| AH111LM, impaga | *"…tiene el pago pendiente (estado: Impaga). Sin el pago al día no hay cobertura."* |
+| Fecha extraída inválida ("ayer" sin convertir) o futura | Se usa la de hoy |
+
+Con la API real:
+
+| Pregunta | Resultado |
+|---|---|
+| *Me robaron el auto AJ222NP* | **Rechazado**: *"…la póliza POL-1008 venció el 01/06/2026, mientras el robo ocurrió el 23/09/2026."* |
+| *El 10 de mayo de 2026 me robaron el auto AJ222NP y recién ahora hago la denuncia* | Fecha extraída: 10/05/2026, dentro de la vigencia, así que pasó al análisis. El análisis lo **rechazó por otro motivo, legítimo**: el manual exige denunciar dentro de las 72 horas |
+
+El segundo caso muestra la división de tareas: el código compara las fechas y
+el modelo interpreta el manual.
+
+**Observación:** con la frase *"Me robaron el auto AJ222NP el 10 de mayo de
+2026"*, el modelo chico la clasificó como consulta y no como denuncia, y no
+llegó al dictamen. Hay que revisar si con el modelo principal pasa lo mismo.

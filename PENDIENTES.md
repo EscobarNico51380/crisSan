@@ -28,7 +28,8 @@ No hace falta notebook.
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
 | Al saludar, responde pidiendo la patente | ✅ | `7e42d4f` |
 | Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | `333af5d` |
-| Una póliza vencida sale cubierta | ⏳ Confirmado con el modelo chico | El dictamen no tiene ninguna regla sobre la vigencia |
+| Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | (este commit) |
+| "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ⏳ Visto con el modelo chico | Revisar con el principal |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
 ## Features
@@ -41,7 +42,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Costo estimado de cada consulta, visible en el chat | ✅ | `4906c02` |
 | Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | `a7f8f3f` |
 | Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ⏳ | Con el modelo chico ya pasaron 4 de 5; falló la póliza vencida (ver Problemas) |
-| Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | (este commit) |
+| Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | 🔶 Casi | `llm.py` ya crea los modelos con `make_llm` y los nombres están en `config.py`. Falta poder elegir otro proveedor (OpenAI, Ollama) |
 | Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |
@@ -63,6 +64,8 @@ el agente ReAct y las imágenes se apoyan en eso.
   coincidir con lo que se diga en la defensa. **Además hay que escribirlo como
   regla en el prompt:** con el modelo chico el mismo caso sale "Rechazado", así
   que hoy la respuesta depende del modelo.
+  **Decisión provisoria:** queda documentado y se retoma más adelante. Si leyendo
+  la póliza entera no se puede resolver, la respuesta será "Requiere peritaje".
 
 ## Entregables
 

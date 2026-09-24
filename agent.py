@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import re
+from datetime import date
 from typing import Annotated, Literal, Optional, TypedDict
 
 from langchain_core.messages import (
@@ -516,6 +517,54 @@ def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
     return {"clausulas": resultado, "exclusiones": exclusiones}
 
 
+def _fecha_valida(texto: str, hoy: date) -> date:
+    """Convierte la fecha que extrajo el LLM; si no es válida o es futura, hoy."""
+    try:
+        fecha = date.fromisoformat((texto or "").strip())
+    except ValueError:
+        return hoy
+    return hoy if fecha > hoy else fecha
+
+
+def _ddmmaaaa(fecha: date) -> str:
+    return fecha.strftime("%d/%m/%Y")
+
+
+def motivo_de_rechazo_administrativo(
+    poliza: dict | None, fecha_siniestro: date
+) -> str | None:
+    """Controla, sin el LLM, que la póliza estuviera vigente y paga.
+
+    Devuelve el motivo del rechazo, o ``None`` si la póliza está en regla.
+    Son comparaciones de fechas y de un estado guardado en la base: no hay
+    nada que interpretar, así que no se le delegan al modelo. Antes, una póliza
+    vencida salía cubierta: el modelo tenía las dos fechas a la vista y no las
+    comparaba.
+    """
+    if not poliza:
+        return None
+    inicio = date.fromisoformat(poliza["fecha_inicio"])
+    vencimiento = date.fromisoformat(poliza["fecha_vencimiento"])
+    if fecha_siniestro > vencimiento:
+        return (
+            f"La póliza {poliza['numero_poliza']} no estaba vigente en la fecha "
+            f"del siniestro: venció el {_ddmmaaaa(vencimiento)} y el siniestro "
+            f"es del {_ddmmaaaa(fecha_siniestro)}."
+        )
+    if fecha_siniestro < inicio:
+        return (
+            f"La póliza {poliza['numero_poliza']} todavía no estaba vigente en la "
+            f"fecha del siniestro: empezó el {_ddmmaaaa(inicio)} y el siniestro "
+            f"es del {_ddmmaaaa(fecha_siniestro)}."
+        )
+    if poliza["estado_pago"].strip().lower() != "al dia":
+        return (
+            f"La póliza {poliza['numero_poliza']} tiene el pago pendiente "
+            f"(estado: {poliza['estado_pago']}). Sin el pago al día no hay cobertura."
+        )
+    return None
+
+
 def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     mensaje = state["messages"][-1].content
     # Acotamos los precedentes al MISMO producto que la póliza en cuestión: una
@@ -550,12 +599,27 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
         lambda m: m.with_structured_output(DictamenSiniestro, method="json_schema"),
         [SystemMessage(content=PROMPT_DICTAMEN), HumanMessage(content=contexto)],
     )
+
+    # Vigencia y pago: los controla el código, no el LLM. El modelo sólo aporta
+    # la fecha que entendió del relato ("ayer", "el lunes"); si no es válida o
+    # es futura, se toma la de hoy. Si la póliza no estaba en regla, el
+    # dictamen es "Rechazado" con un fundamento escrito por el sistema, sin
+    # importar lo que haya dicho el modelo.
+    fecha_siniestro = _fecha_valida(resultado.fecha_ocurrencia, date.today())
+    determinacion = resultado.determinacion
+    fundamento = resultado.fundamento
+    motivo = motivo_de_rechazo_administrativo(
+        database.obtener_vigencia(state.get("patente", "")), fecha_siniestro
+    )
+    if motivo:
+        determinacion, fundamento = "Rechazado", motivo
+
     return {
         "dictamen": {
-            "determinacion": resultado.determinacion,
-            "fundamento": resultado.fundamento,
+            "determinacion": determinacion,
+            "fundamento": fundamento,
             "tipo_siniestro": resultado.tipo_siniestro,
-            "fecha_ocurrencia": resultado.fecha_ocurrencia,
+            "fecha_ocurrencia": fecha_siniestro.isoformat(),
             "hubo_lesionados": resultado.hubo_lesionados,
         }
     }
