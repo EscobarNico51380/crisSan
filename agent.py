@@ -50,7 +50,6 @@ from rag import buscar_exclusiones
 from tools import (
     consultar_clausulas_poliza,
     consultar_datos_poliza,
-    consultar_estado_reclamo,
     consultar_polizas_por_dni,
     consultar_siniestros_previos,
     registrar_siniestro,
@@ -200,7 +199,7 @@ class EstadoAgente(TypedDict):
     exclusiones: str  # exclusiones que dependen del vehículo (ej. GNC)
     dictamen: dict  # dictamen estructurado del siniestro
     siniestro_registrado: str  # resultado del registro del siniestro
-    reclamo_resultado: str  # resultado de consultar_estado_reclamo
+    reclamo_resultado: str  # ficha del reclamo consultado
 
 
 # ---------------------------------------------------------------------------
@@ -487,9 +486,28 @@ def nodo_listar_polizas(state: EstadoAgente) -> dict:
 
 
 def nodo_consultar_reclamo(state: EstadoAgente) -> dict:
-    reclamo = state["reclamo"]
-    resultado = consultar_estado_reclamo.invoke({"numero_reclamo": reclamo})
-    return {"reclamo_resultado": resultado}
+    """Responde con la ficha del reclamo armada por el código, sin el LLM.
+
+    Antes la ficha pasaba por el LLM para redactar la respuesta, y el modelo
+    podía resumirla hasta dejar solo el estado ("Iniciado."). Es una consulta
+    de datos: se muestra tal cual, siempre completa, y la respuesta no gasta
+    tokens (solo la clasificación del mensaje).
+    """
+    numero = state["reclamo"]
+    datos = database.obtener_reclamo(numero)
+    if datos:
+        texto = database.formatear_reclamo(datos, markdown=True)
+    else:
+        texto = (
+            f"No encontré ningún reclamo con el número #{numero}. "
+            "¿Podés revisar el número?"
+        )
+    cambios = {"reclamo_resultado": texto, "messages": [AIMessage(content=texto)]}
+    if datos:
+        # Así el agente sabe de qué auto se habla en las preguntas siguientes,
+        # aunque la conversación haya empezado por el número de reclamo.
+        cambios["patente"] = datos["patente"]
+    return cambios
 
 
 def nodo_consultar_poliza(state: EstadoAgente) -> dict:
@@ -666,8 +684,6 @@ def nodo_responder(state: EstadoAgente) -> dict:
         )
     if state.get("siniestro_registrado"):
         contexto.append(f"[Registro]\n{state['siniestro_registrado']}")
-    if state.get("reclamo_resultado"):
-        contexto.append(f"[Estado del reclamo]\n{state['reclamo_resultado']}")
 
     mensajes = [SystemMessage(content=PROMPT_RESPONDER)]
     if state.get("resumen"):
@@ -762,7 +778,15 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
     mensaje = state["messages"][-1].content.lower()
 
     # Señales EXPLÍCITAS del mensaje actual (determinísticas, máxima prioridad).
-    if ("reclamo" in mensaje or "claim" in mensaje) and state.get("reclamo"):
+    # Para el reclamo se mira también la pregunta reescrita por el clasificador:
+    # en "¿y por qué me lo aprobaron?" la palabra "reclamo" solo aparece ahí.
+    reescrita = (state.get("consulta") or "").lower()
+    menciona_reclamo = any(
+        palabra in texto
+        for palabra in ("reclamo", "claim")
+        for texto in (mensaje, reescrita)
+    )
+    if menciona_reclamo and state.get("reclamo"):
         return "consultar_reclamo"
     if extraer_dni(mensaje) and not extraer_patente(mensaje):
         return "listar_polizas"
@@ -824,7 +848,8 @@ def construir_agente():
     # cuando el historial llegó al umbral.
     grafo.add_edge("pedir_patente", "compactar")
     grafo.add_edge("listar_polizas", "compactar")
-    grafo.add_edge("consultar_reclamo", "responder")
+    # La ficha del reclamo ya es la respuesta: no pasa por el LLM.
+    grafo.add_edge("consultar_reclamo", "compactar")
     grafo.add_edge("consultar_poliza", "consultar_clausulas")
     grafo.add_conditional_edges(
         "consultar_clausulas",

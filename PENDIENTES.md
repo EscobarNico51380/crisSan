@@ -28,7 +28,7 @@ No hace falta notebook.
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
 | Al saludar, responde pidiendo la patente | ✅ | `7e42d4f` |
 | Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | `333af5d` |
-| Al consultar un reclamo respondía solo "está en estado Iniciado" | 🔶 Se guarda el motivo y la herramienta devuelve la ficha completa (este commit); el modelo chico igual respondió solo el estado | Propuesta: que la ficha sea la respuesta, armada por el código |
+| Al consultar un reclamo respondía solo "está en estado Iniciado" | ✅ La ficha completa la arma el código, sin el LLM | `469418c` y (este commit) |
 | Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | `a48070e` |
 | "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ⏳ Visto con el modelo chico | Revisar con el principal |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |

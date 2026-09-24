@@ -420,17 +420,12 @@ def _fecha_legible(texto: str | None) -> str:
         return texto
 
 
-def consultar_estado_reclamo(numero_reclamo: str) -> str:
-    """Devuelve la ficha completa de un reclamo por su número.
-
-    Incluye el vehículo, qué pasó y cuándo, el relato del cliente, el dictamen
-    con su motivo y el estado. Antes devolvía solo el tipo, el dictamen y el
-    estado, y el asistente respondía únicamente "está en estado Iniciado".
-    """
+def obtener_reclamo(numero_reclamo: str) -> dict | None:
+    """Devuelve todos los datos de un reclamo, o ``None`` si no existe."""
     try:
         numero = int(numero_reclamo)
     except (TypeError, ValueError):
-        return f"No se encontró ningún reclamo con el número '{numero_reclamo}'."
+        return None
 
     conn = get_conn()
     row = conn.execute(
@@ -449,27 +444,52 @@ def consultar_estado_reclamo(numero_reclamo: str) -> str:
         (numero,),
     ).fetchone()
     conn.close()
+    return dict(row) if row else None
 
-    if not row:
-        return f"No se encontró ningún reclamo con el número #{numero_reclamo}."
 
-    lesionados = "con lesionados" if row["hubo_lesionados"] else "sin lesionados"
-    motivo = row["fundamento_ia"] or (
+def formatear_reclamo(datos: dict, markdown: bool = False) -> str:
+    """Arma la ficha de un reclamo, en texto plano o en Markdown para el chat."""
+    lesionados = "con lesionados" if datos["hubo_lesionados"] else "sin lesionados"
+    motivo = datos["fundamento_ia"] or (
         "no quedó registrado (el reclamo es anterior a que se guardara el motivo)"
     )
-    return (
-        f"Reclamo #{row['id_siniestro']}\n"
-        f"Vehículo: {row['marca']} {row['modelo']}, patente {row['patente']} "
-        f"(póliza {row['numero_poliza']}, producto {row['producto']}), "
-        f"titular {row['nombre_completo']}\n"
-        f"Siniestro: {row['tipo_siniestro']}, ocurrido el "
-        f"{_fecha_legible(row['fecha_ocurrencia'])}, {lesionados}\n"
-        f'Relato del cliente: "{row["descripcion_usuario"]}"\n'
-        f"Denunciado el {_fecha_legible(row['fecha_denuncia'])}\n"
-        f"Dictamen: {row['dictamen_ia']}\n"
-        f"Motivo del dictamen: {motivo}\n"
-        f"Estado del reclamo: {row['estado_reclamo']}"
-    )
+    campos = [
+        (
+            "Vehículo",
+            f"{datos['marca']} {datos['modelo']}, patente {datos['patente']} "
+            f"(póliza {datos['numero_poliza']}, producto {datos['producto']})",
+        ),
+        ("Titular", datos["nombre_completo"]),
+        (
+            "Siniestro",
+            f"{datos['tipo_siniestro']}, ocurrido el "
+            f"{_fecha_legible(datos['fecha_ocurrencia'])}, {lesionados}",
+        ),
+        ("Relato del cliente", f'"{datos["descripcion_usuario"]}"'),
+        ("Denunciado", f"el {_fecha_legible(datos['fecha_denuncia'])}"),
+        ("Dictamen", datos["dictamen_ia"]),
+        ("Motivo", motivo),
+        ("Estado", datos["estado_reclamo"]),
+    ]
+    if markdown:
+        lineas = [f"**Reclamo #{datos['id_siniestro']}**", ""]
+        lineas += [f"- **{clave}:** {valor}" for clave, valor in campos]
+    else:
+        lineas = [f"Reclamo #{datos['id_siniestro']}"]
+        lineas += [f"{clave}: {valor}" for clave, valor in campos]
+    return "\n".join(lineas)
+
+
+def consultar_estado_reclamo(numero_reclamo: str) -> str:
+    """Devuelve la ficha completa de un reclamo por su número.
+
+    Incluye el vehículo, qué pasó y cuándo, el relato del cliente, el dictamen
+    con su motivo y el estado.
+    """
+    datos = obtener_reclamo(numero_reclamo)
+    if not datos:
+        return f"No se encontró ningún reclamo con el número #{numero_reclamo}."
+    return formatear_reclamo(datos)
 
 
 def vehiculo_tiene_gnc(patente: str) -> bool:
