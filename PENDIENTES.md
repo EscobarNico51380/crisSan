@@ -45,7 +45,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | `a7f8f3f` |
 | Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ⏳ | Con el modelo chico ya pasaron 4 de 5; falló la póliza vencida (ver Problemas) |
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
-| Elegir el modelo desde la web (el otro queda de respaldo) | ✅ | (este commit) |
+| Elegir el modelo desde la web (el otro queda de respaldo) | ✅ | `7e986c3` |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | 🔶 Casi | `llm.py` ya crea los modelos con `make_llm` y los nombres están en `config.py`. Falta poder elegir otro proveedor (OpenAI, Ollama) |
 | Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |
@@ -86,6 +86,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | `d291f74` |
 | Reorganizar la documentación: se borra `ONBOARDING.md` (lo cubre el README) y `SETUP.md` pasa a ser `AGENTS.md`, la guía interna para el equipo y para asistentes de IA (`CLAUDE.md` la importa) | ✅ | `3085cb5` |
 | Armar el zip de la entrega: sin `.venv` ni `data/modelos`, sin los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`), con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
+| Prueba previa del grupo: clonar el repo en una carpeta nueva e instalar con `python iniciar.py`, en Windows y en Linux (Nicolás), y reportar sistema, versión de Python, tiempo y errores | ⏳ |
 | Probar la instalación desde cero con el zip, siguiendo solo el README, en Windows y en Linux | ⏳ |
 
 ---
