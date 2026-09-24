@@ -28,7 +28,7 @@ No hace falta notebook.
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
 | Al saludar, responde pidiendo la patente | ✅ | `7e42d4f` |
 | Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | `333af5d` |
-| Al consultar un reclamo respondía solo "está en estado Iniciado" | ✅ La ficha completa la arma el código, sin el LLM | `469418c` y (este commit) |
+| Al consultar un reclamo respondía solo "está en estado Iniciado" | ✅ La ficha completa la arma el código, sin el LLM | `469418c`, `35fbdc5` |
 | Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | `a48070e` |
 | "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ⏳ Visto con el modelo chico | Revisar con el principal |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
@@ -45,6 +45,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | `a7f8f3f` |
 | Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ⏳ | Con el modelo chico ya pasaron 4 de 5; falló la póliza vencida (ver Problemas) |
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
+| Elegir el modelo desde la web (el otro queda de respaldo) | ✅ | (este commit) |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | 🔶 Casi | `llm.py` ya crea los modelos con `make_llm` y los nombres están en `config.py`. Falta poder elegir otro proveedor (OpenAI, Ollama) |
 | Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |

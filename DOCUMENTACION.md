@@ -268,6 +268,7 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - ✅ Manejo de rate limits con reintentos.
 - ✅ Costo estimado de cada turno y de la conversación, visible en el chat.
 - ✅ Modelo de respaldo automático cuando el principal agota su cupo diario.
+- ✅ Selector de modelo en la web.
 - ✅ Recorrido sugerido en la web: 10 consultas en orden, cada una con un botón, que muestran las funciones del sistema.
 
 ## 13. Limitaciones y mejoras futuras
@@ -700,6 +701,14 @@ invocar_llm(lambda m: m, mensajes)  # respuesta de texto
 
 `llm.py` es además el único lugar donde se crean los modelos (`make_llm`), y los
 nombres de los dos modelos están en `config.py`.
+
+**Elegir el modelo desde la web.** La barra lateral tiene un selector: el modelo
+elegido pasa a ser el principal y el otro queda de respaldo, con el mismo
+disyuntor. La elección vale para toda la app (`llm.elegir_modelo_principal`),
+lo que alcanza para un uso local. Sirve, por ejemplo, para mostrar en vivo la
+diferencia entre los dos modelos en un caso ambiguo. Probado: al elegir
+`gpt-oss-20b` respondió él (US$ 0,0001 el turno) y la barra indicó el
+respaldo; al volver, el orden se restableció.
 
 **Qué ve el usuario.** Si respondió el respaldo, debajo de la respuesta aparece
 *"Respondido con el modelo de respaldo (openai/gpt-oss-20b): el principal agotó

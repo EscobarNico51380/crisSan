@@ -13,7 +13,8 @@ from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import HumanMessage
 
 import costos
-from config import GROQ_API_KEY, LLM_MODEL, LLM_MODELO_RESPALDO
+import llm
+from config import GROQ_API_KEY
 
 # Recorrido sugerido: consultas pensadas para mostrar, en orden, lo que hace el
 # sistema. Cada una se envía con un botón de la barra lateral. Las que dependen
@@ -40,6 +41,12 @@ RECORRIDO = [
     ),
     ("Mi DNI es 30555777", "Busca por DNI y lista las pólizas de la titular."),
 ]
+
+# Nombres legibles para el selector de modelo de la barra lateral.
+DESCRIPCION_MODELOS = {
+    "openai/gpt-oss-120b": "gpt-oss-120b · el más preciso (recomendado)",
+    "openai/gpt-oss-20b": "gpt-oss-20b · más rápido y más barato",
+}
 
 st.set_page_config(page_title="San Cris", page_icon="🚗", layout="centered")
 
@@ -77,8 +84,16 @@ with st.sidebar:
     st.title("San Cris")
     st.caption("Asistente virtual de San Cristobal")
     st.divider()
-    st.markdown(f"**Modelo:** `{LLM_MODEL}`")
-    st.caption(f"Respaldo si se agota el cupo diario: `{LLM_MODELO_RESPALDO}`")
+    elegido = st.selectbox(
+        "Modelo de lenguaje",
+        llm.MODELOS,
+        index=llm.MODELOS.index(llm.modelo_principal()),
+        format_func=lambda m: DESCRIPCION_MODELOS.get(m, m),
+        help="Si el modelo elegido agota su cupo diario, se usa el otro automáticamente.",
+    )
+    llm.elegir_modelo_principal(elegido)
+    respaldo = ", ".join(m for m in llm.MODELOS if m != elegido)
+    st.caption(f"Respaldo si se agota el cupo diario: `{respaldo}`")
     st.divider()
     st.markdown("**Costo estimado de la conversación**")
     # Se completa al final del script, para que incluya el turno recién hecho.
@@ -158,7 +173,9 @@ if prompt := (
         consumo = costos.consumo_de(contador.usage_metadata)
         st.session_state.consumo_total = st.session_state.consumo_total + consumo
         costo_turno = f"Este turno: {costos.formatear(consumo)}"
-        respaldo = sorted(m for m in contador.usage_metadata if m != LLM_MODEL)
+        respaldo = sorted(
+            m for m in contador.usage_metadata if m != llm.modelo_principal()
+        )
         if respaldo:
             costo_turno += (
                 f" · Respondido con el modelo de respaldo ({', '.join(respaldo)}): "

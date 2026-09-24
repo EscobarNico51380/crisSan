@@ -36,6 +36,9 @@ def make_llm(modelo: str) -> ChatGroq:
 
 
 _llms = {modelo: make_llm(modelo) for modelo in MODELOS}
+# Orden de preferencia actual: el primero es el principal y el resto son
+# respaldos. Se puede cambiar mientras la app corre (selector de la web).
+_orden: list[str] = list(MODELOS)
 _bloqueado_hasta: dict[str, float] = {}
 _candado = threading.Lock()
 
@@ -106,13 +109,30 @@ def invocar_con_reintentos(func, *args, **kwargs):
     raise ultimo_error
 
 
+def modelo_principal() -> str:
+    """El modelo que se intenta primero."""
+    return _orden[0]
+
+
+def elegir_modelo_principal(modelo: str) -> None:
+    """Pone ``modelo`` primero; los demás quedan como respaldo, en su orden.
+
+    La elección vale para toda la app (el estado de este módulo es compartido
+    por todas las sesiones), lo que alcanza para un uso local.
+    """
+    if modelo not in MODELOS:
+        raise ValueError(f"Modelo desconocido: {modelo}")
+    with _candado:
+        _orden[:] = [modelo] + [m for m in MODELOS if m != modelo]
+
+
 def segundos_bloqueado(modelo: str) -> float:
     """Cuánto falta para volver a intentar ese modelo (0 si está disponible)."""
     return max(0.0, _bloqueado_hasta.get(modelo, 0.0) - time.time())
 
 
 def invocar(construir: Callable[[ChatGroq], Any], entrada: Any) -> Any:
-    """Invoca el primer modelo con cupo, en el orden de ``MODELOS``.
+    """Invoca el primer modelo con cupo, en el orden de preferencia actual.
 
     ``construir`` arma, a partir del modelo, lo que se va a invocar. Para una
     respuesta de texto es el modelo tal cual (``lambda m: m``); para una salida
@@ -122,7 +142,7 @@ def invocar(construir: Callable[[ChatGroq], Any], entrada: Any) -> Any:
     Si todos los modelos están sin cupo, lanza ``CupoAgotado`` con la espera
     más corta.
     """
-    for modelo in MODELOS:
+    for modelo in list(_orden):
         if segundos_bloqueado(modelo) > 0:
             continue  # disyuntor abierto: ni se intenta
         try:
