@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import math
 import re
-import time
 from typing import Annotated, Literal, Optional, TypedDict
 
 from langchain_core.messages import (
@@ -31,20 +30,20 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_core.messages import AnyMessage
-from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 import database
+from llm import CupoAgotado, segundos_de_espera
+from llm import invocar as invocar_llm
 from config import (
     HISTORIAL_CLASIFICADOR,
     HISTORIAL_CLASIFICADOR_CHARS,
     HISTORIAL_MENSAJES_A_CONSERVAR,
     HISTORIAL_RESUMEN_CHARS,
     HISTORIAL_UMBRAL_RESUMEN,
-    LLM_MODEL,
 )
 from rag import buscar_exclusiones
 from tools import (
@@ -59,7 +58,8 @@ from tools import (
 # ---------------------------------------------------------------------------
 # Modelo de lenguaje
 # ---------------------------------------------------------------------------
-llm = ChatGroq(model=LLM_MODEL, temperature=0)
+# Los modelos (principal y de respaldo) se crean en ``llm.py``. Todas las
+# llamadas pasan por ``invocar_llm``, que usa el primero que tenga cupo.
 
 # Patente argentina: formato Mercosur (AB123CD) o formato viejo (ABC123).
 # Toleramos separadores opcionales: "AB 123 CD", "AB-123-CD" o "AB123CD".
@@ -132,55 +132,6 @@ def extraer_texto(content) -> str:
     return str(content)
 
 
-def invocar_con_reintentos(func, *args, **kwargs):
-    """Reintenta llamadas al LLM ante errores transitorios (429/503).
-
-    Tanto la API gratuita de Gemini como la de Groq pueden responder
-    temporalmente 429 (rate limit) o 503 (alta demanda). Hacemos backoff
-    exponencial y reintentamos hasta ``intentos`` veces.
-    """
-    intentos = kwargs.pop("_intentos", 5)
-    ultimo_error = None
-    for i in range(intentos):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:  # noqa: BLE001
-            ultimo_error = e
-            mensaje = str(e)
-            # El límite diario de tokens (TPD) no se resuelve con reintentos.
-            if "tokens per day" in mensaje or "TPD" in mensaje:
-                raise
-            es_transitorio = any(
-                token in mensaje
-                for token in (
-                    "503",
-                    "429",
-                    "UNAVAILABLE",
-                    "RESOURCE_EXHAUSTED",
-                    "high demand",
-                    "rate limit",
-                    "Rate limit",
-                )
-            )
-            if es_transitorio and i < intentos - 1:
-                time.sleep(2**i)  # 1s, 2s, 4s, 8s...
-                continue
-            raise
-    raise ultimo_error
-
-
-def _segundos_de_espera(mensaje: str) -> float | None:
-    """Lee la espera que sugiere la API ("try again in 20m40.7s" -> 1240.7)."""
-    m = re.search(
-        r"try again in\s+(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?",
-        mensaje,
-    )
-    if not m or not any(m.groups()):
-        return None
-    horas, minutos, segundos = m.groups()
-    return int(horas or 0) * 3600 + int(minutos or 0) * 60 + float(segundos or 0)
-
-
 def mensaje_para_el_usuario(error: Exception) -> str:
     """Traduce un error del sistema a un mensaje apto para el chat.
 
@@ -189,7 +140,7 @@ def mensaje_para_el_usuario(error: Exception) -> str:
     corre la app, en la terminal (lo imprimen ``app.py`` y ``main.py``).
     """
     texto = str(error)
-    es_limite = any(
+    es_limite = isinstance(error, CupoAgotado) or any(
         s in texto
         for s in ("rate_limit_exceeded", "Rate limit", "rate limit", "429")
     )
@@ -199,7 +150,10 @@ def mensaje_para_el_usuario(error: Exception) -> str:
             "Probá de nuevo en unos minutos."
         )
 
-    espera = _segundos_de_espera(texto)
+    if isinstance(error, CupoAgotado):
+        espera = error.segundos
+    else:
+        espera = segundos_de_espera(texto)
     if espera is None:
         cuando = "en unos minutos"
     else:
@@ -451,10 +405,9 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
     # json_schema usa el structured output nativo de Groq: fuerza el schema
     # y evita tool calls malformados (como {"consulta": ...} en vez de
     # {"intencion": ...}).
-    clasificador = llm.with_structured_output(AnalisisEntrada, method="json_schema")
     try:
-        resultado: AnalisisEntrada = invocar_con_reintentos(
-            clasificador.invoke,
+        resultado: AnalisisEntrada = invocar_llm(
+            lambda m: m.with_structured_output(AnalisisEntrada, method="json_schema"),
             [
                 SystemMessage(content=PROMPT_CLASIFICAR),
                 HumanMessage(
@@ -593,9 +546,8 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
         f"--- RESOLUCIONES PREVIAS (precedentes) ---\n{precedentes}\n\n"
         f"--- RELATO DEL USUARIO ---\n{relato}"
     )
-    dictaminador = llm.with_structured_output(DictamenSiniestro, method="json_schema")
-    resultado: DictamenSiniestro = invocar_con_reintentos(
-        dictaminador.invoke,
+    resultado: DictamenSiniestro = invocar_llm(
+        lambda m: m.with_structured_output(DictamenSiniestro, method="json_schema"),
         [SystemMessage(content=PROMPT_DICTAMEN), HumanMessage(content=contexto)],
     )
     return {
@@ -677,7 +629,7 @@ def nodo_responder(state: EstadoAgente) -> dict:
         )
     mensajes.extend(state["messages"])
 
-    respuesta = invocar_con_reintentos(llm.invoke, mensajes)
+    respuesta = invocar_llm(lambda m: m, mensajes)
     texto = extraer_texto(respuesta.content).strip()
     if not texto:
         # Fallback defensivo: el modelo puede devolver vacío por flakiness o
@@ -716,8 +668,8 @@ def nodo_compactar(state: EstadoAgente) -> dict:
         f"{_transcripcion(viejos, HISTORIAL_RESUMEN_CHARS)}"
     )
     try:
-        respuesta = invocar_con_reintentos(
-            llm.invoke,
+        respuesta = invocar_llm(
+            lambda m: m,
             [SystemMessage(content=PROMPT_RESUMEN), HumanMessage(content=pedido)],
         )
         resumen = extraer_texto(respuesta.content).strip()

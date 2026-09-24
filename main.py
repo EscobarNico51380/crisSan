@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage
 import costos
 import database
 from agent import agente, mensaje_para_el_usuario
+from config import LLM_MODEL
 
 # Un thread_id fijo por sesión para que la memoria funcione.
 CONFIG = {"configurable": {"thread_id": "demo-1"}}
@@ -66,6 +67,9 @@ def main() -> None:
         total = total + consumo
         print(f"\n  [Este turno: {costos.formatear(consumo)}]")
         print(f"  [Conversación: {costos.formatear(total)}]")
+        respaldo = sorted(m for m in contador.usage_metadata if m != LLM_MODEL)
+        if respaldo:
+            print(f"  [Respondido con el modelo de respaldo: {', '.join(respaldo)}]")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import HumanMessage
 
 import costos
-from config import GROQ_API_KEY, LLM_MODEL
+from config import GROQ_API_KEY, LLM_MODEL, LLM_MODELO_RESPALDO
 
 st.set_page_config(page_title="San Cris", page_icon="🚗", layout="centered")
 
@@ -52,6 +52,7 @@ with st.sidebar:
     st.caption("Asistente virtual de San Cristobal")
     st.divider()
     st.markdown(f"**Modelo:** `{LLM_MODEL}`")
+    st.caption(f"Respaldo si se agota el cupo diario: `{LLM_MODELO_RESPALDO}`")
     st.divider()
     st.markdown("**Costo estimado de la conversación**")
     # Se completa al final del script, para que incluya el turno recién hecho.
@@ -125,6 +126,12 @@ if prompt := st.chat_input("Escribí tu consulta sobre tu póliza..."):
         consumo = costos.consumo_de(contador.usage_metadata)
         st.session_state.consumo_total = st.session_state.consumo_total + consumo
         costo_turno = f"Este turno: {costos.formatear(consumo)}"
+        respaldo = sorted(m for m in contador.usage_metadata if m != LLM_MODEL)
+        if respaldo:
+            costo_turno += (
+                f" · Respondido con el modelo de respaldo ({', '.join(respaldo)}): "
+                "el principal agotó su cupo diario"
+            )
 
         st.markdown(respuesta)
         st.caption(costo_turno)

@@ -102,6 +102,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 | `main.py` | Loop interactivo por consola |
 | `app.py` | Interfaz web Streamlit (chat + memoria por sesión) |
 | `costos.py` | Costo estimado de cada turno y de la conversación, a partir de los tokens |
+| `llm.py` | Creación de los modelos, modelo de respaldo y disyuntor (§20) |
 
 ---
 
@@ -259,6 +260,7 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - ✅ Interfaz web (Streamlit) y consola.
 - ✅ Manejo de rate limits con reintentos.
 - ✅ Costo estimado de cada turno y de la conversación, visible en el chat.
+- ✅ Modelo de respaldo automático cuando el principal agota su cupo diario.
 
 ## 13. Limitaciones y mejoras futuras
 
@@ -656,3 +658,54 @@ dentro del script de prueba. Antes de cada batería se vació la tabla
   y la póliza tenía el vencimiento a la vista, pero el prompt del dictamen no
   tiene ninguna regla sobre la vigencia, y el modelo no las comparó. En el
   fundamento escribió *"la póliza está al día"*, que se refiere al pago.
+
+
+---
+
+## 20. Modelo de respaldo y disyuntor
+
+El plan gratuito de Groq limita los tokens diarios **por modelo**. El sistema
+usa `gpt-oss-120b` y, cuando agota su cupo, pasa solo a `gpt-oss-20b`, que
+tiene el suyo. La prueba con el modelo chico mostró que coincide con el
+principal en todos los casos claros.
+
+**El disyuntor.** Sin él, cada consulta intentaría primero el modelo agotado,
+fallaría y recién ahí pasaría al respaldo. Cuando un modelo responde "cupo
+diario agotado, probá de nuevo en 20 minutos", `llm.py` anota hasta cuándo está
+bloqueado y, mientras tanto, **ni lo intenta**. Pasado ese tiempo vuelve a
+probar con el principal. Si los dos están agotados, el chat muestra el mensaje
+amigable con la espera más corta.
+
+El estado vive en memoria y lo comparten todas las sesiones de la app, porque
+el cupo es de la key y no de cada usuario. Si la app se reinicia se pierde: el
+primer intento vuelve a detectar el bloqueo, y un rechazo por cupo no consume
+tokens.
+
+**Cómo se implementó.** Todas las llamadas al LLM pasan por `llm.invocar`, que
+recibe una función para armar el pedido a partir del modelo. Así, el mismo
+pedido (texto o salida estructurada) se puede repetir con el respaldo:
+
+```python
+invocar_llm(lambda m: m.with_structured_output(DictamenSiniestro, method="json_schema"), mensajes)
+invocar_llm(lambda m: m, mensajes)  # respuesta de texto
+```
+
+`llm.py` es además el único lugar donde se crean los modelos (`make_llm`), y los
+nombres de los dos modelos están en `config.py`.
+
+**Qué ve el usuario.** Si respondió el respaldo, debajo de la respuesta aparece
+*"Respondido con el modelo de respaldo (openai/gpt-oss-20b): el principal agotó
+su cupo diario"*, y el costo se calcula con el precio de ese modelo.
+
+**Pruebas.** Con modelos simulados (sin gastar API):
+
+| Situación | Resultado |
+|---|---|
+| El principal sin cupo | Responde el respaldo |
+| Dos consultas más | El principal **no se vuelve a intentar**: 1 solo intento en total |
+| Pasa el tiempo de bloqueo | Vuelve a responder el principal |
+| Los dos sin cupo | *"El sistema no puede responder consultas en este momento. Probá de nuevo en 21 minutos."* |
+
+Y con la API real, dos consultas (un saludo y una consulta de póliza) pasaron
+por el código nuevo y las respondió el principal, confirmando que el camino
+normal no cambió.

@@ -31,6 +31,10 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # - "openai/gpt-oss-120b" (120B): mejor razonamiento, 500 tps.
 # - "openai/gpt-oss-20b" (20B): más rápido (1000 tps), con su propio cupo.
 LLM_MODEL = "openai/gpt-oss-120b"
+# Respaldo: se usa solo cuando el principal agota su cupo diario (ver llm.py).
+# Probado con las dos baterías: coincide con el principal en todos los casos
+# claros (DOCUMENTACION.md, prueba con el modelo chico).
+LLM_MODELO_RESPALDO = "openai/gpt-oss-20b"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-base"
 
 # --- Almacenamiento ---------------------------------------------------------
@@ -73,6 +77,8 @@ HISTORIAL_RESUMEN_CHARS = 800
 # su precio acá; si no, sus tokens se cuentan pero no suman costo.
 PRECIOS_USD_POR_MILLON = {
     "openai/gpt-oss-120b": {"entrada": 0.15, "entrada_cache": 0.075, "salida": 0.60},
+    # https://console.groq.com/docs/model/openai/gpt-oss-20b (2026-09-23)
+    "openai/gpt-oss-20b": {"entrada": 0.075, "entrada_cache": 0.037, "salida": 0.30},
 }
 
 
