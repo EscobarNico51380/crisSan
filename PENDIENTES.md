@@ -40,7 +40,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Feature | Estado | Notas |
 |---|---|---|
 | Costo estimado de cada consulta, visible en el chat | ✅ | `4906c02` |
-| Recorrido sugerido en la web: botones con las consultas recomendadas | ✅ | (este commit) |
+| Recorrido sugerido en la web: botones con las consultas recomendadas | ✅ | `2d828c8` |
 | Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | `a7f8f3f` |
 | Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ⏳ | Con el modelo chico ya pasaron 4 de 5; falló la póliza vencida (ver Problemas) |
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
@@ -81,9 +81,10 @@ el agente ReAct y las imágenes se apoyan en eso.
 
 | Tarea | Estado |
 |---|---|
-| Unificar `ONBOARDING.md` y `SETUP.md` | ⏳ |
-| Paquete para el profesor con la menor fricción posible: key de Groq de una cuenta nueva dedicada a la entrega (con 1-2 meses de vida, y revocarla después), instalación desde `requirements-lock.txt`, un script de instalación de un solo comando y la base vectorial ya armada | ⏳ |
-| Probar la instalación desde cero siguiendo solo las instrucciones escritas | ⏳ |
+| `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | (este commit) |
+| Decidir qué hacer con `ONBOARDING.md` y `SETUP.md`, ahora que el README cubre lo que necesita el profesor | ⏳ |
+| Armar el zip de la entrega: sin `.venv` ni `data/modelos`, con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
+| Probar la instalación desde cero con el zip, siguiendo solo el README, en Windows y en Linux | ⏳ |
 
 ---
 

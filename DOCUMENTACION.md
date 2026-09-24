@@ -103,6 +103,7 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 | `app.py` | Interfaz web Streamlit (chat + memoria por sesión) |
 | `costos.py` | Costo estimado de cada turno y de la conversación, a partir de los tokens |
 | `llm.py` | Creación de los modelos, modelo de respaldo y disyuntor (§20) |
+| `iniciar.py` | Instala todo la primera vez y abre el chat, con un solo comando (§23) |
 
 ---
 
@@ -229,6 +230,10 @@ se mantiene acotado con una ventana + resumen (§16).
 ---
 
 ## 11. Cómo ejecutar
+
+**La forma recomendada es un solo comando: `python iniciar.py`**, que instala todo
+la primera vez y abre el chat (ver `README.md` y §23). Lo que sigue es la
+instalación manual, para desarrollo.
 
 ```bash
 # 1. Crear entorno e instalar
@@ -804,3 +809,52 @@ una vez).
 **Prueba:** con un agente simulado (sin gastar API), los botones envían
 exactamente su consulta, en el orden en que se tocan, y se combinan con las
 consultas escritas a mano.
+
+
+---
+
+## 23. Instalación y arranque con un solo comando
+
+Para compensar que la entrega no es un notebook, el objetivo es que el profesor
+pase de la carpeta descomprimida al chat funcionando **con un solo comando y sin
+tomar decisiones**: `python iniciar.py`.
+
+### Qué hace `iniciar.py`
+
+La primera vez:
+
+1. Explica qué va a instalar y dónde, y pide confirmación.
+2. Revisa la versión de Python (compatible: 3.11 a 3.13; probado con 3.13).
+3. Crea el entorno virtual e instala las librerías **desde `requirements-lock.txt`**,
+   con las versiones exactas que se probaron.
+4. Descarga el modelo de embeddings, crea la base de datos y arma el índice del
+   manual. Antes, esa descarga pasaba con la primera pregunta, que tardaba varios
+   minutos y parecía colgada.
+5. Verifica la API key de Groq: si no hay una en `.env`, la pide y la guarda.
+   La validación lista los modelos de Groq, que no consume tokens.
+6. Abre el chat en el navegador.
+
+Las veces siguientes solo verifica la key y abre el chat. Si la instalación se
+corta, volver a ejecutarlo retoma desde donde quedó.
+
+### Decisiones
+
+| Decisión | Motivo |
+|---|---|
+| Un script en Python y no un `.ps1` + un `.sh` | Un solo archivo sirve para Windows, Linux y Mac. Además, Windows bloquea por defecto los scripts `.ps1` |
+| Solo biblioteca estándar | Corre con el Python del sistema, antes de que exista el entorno virtual. Los pasos que necesitan las librerías los lanza con el Python del entorno |
+| Todo queda dentro de la carpeta | El modelo de embeddings se redirige a `data/modelos` (variable `HF_HOME`) y pip instala sin caché. Para desinstalar, alcanza con borrar la carpeta |
+| Streamlit en modo *headless* y el navegador lo abre el script | La primera vez, Streamlit puede frenar la terminal pidiendo un email |
+| Streamlit atado a `localhost` | El chat no queda expuesto a la red y el firewall de Windows no pregunta nada. Sin esto, mostraba la IP pública |
+| En Linux, PyTorch en su versión para CPU | La versión por defecto trae varios GB de librerías de GPU que el sistema no usa. **Sin probar todavía en Linux** |
+
+### Pruebas
+
+| Situación | Resultado |
+|---|---|
+| Carpeta con `.venv` pero sin instalar | Reutilizó el entorno, verificó las librerías, descargó el modelo en `data/modelos` (1,1 GB), armó la base y el índice y validó la key. Tardó 3 minutos |
+| Ya instalado | Validó la key y a los 2 segundos el chat respondía en el navegador |
+| Sin key | La pidió, rechazó una falsa (*"La key no funcionó"*), aceptó la válida y la guardó en `.env` |
+
+Queda pendiente la prueba completa desde cero (carpeta nueva, descargando todo),
+en Windows y en Linux.
