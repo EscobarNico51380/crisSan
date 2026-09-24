@@ -85,10 +85,16 @@ def inicializar_base() -> None:
             descripcion_usuario TEXT NOT NULL,
             estado_reclamo TEXT DEFAULT 'Iniciado',
             dictamen_ia TEXT,
+            fundamento_ia TEXT,
             FOREIGN KEY (numero_poliza) REFERENCES polizas (numero_poliza)
         )
         """
     )
+    # Migración: el motivo del dictamen se guarda desde el 23/09/2026. Las
+    # bases creadas antes no tienen la columna; se agrega sin tocar los datos.
+    columnas = {c["name"] for c in cur.execute("PRAGMA table_info(siniestros)")}
+    if "fundamento_ia" not in columnas:
+        cur.execute("ALTER TABLE siniestros ADD COLUMN fundamento_ia TEXT")
 
     # --- Datos sintéticos ---
     cur.execute(
@@ -228,8 +234,13 @@ def registrar_siniestro(
     hubo_lesionados: int,
     descripcion: str,
     dictamen: str,
+    fundamento: str = "",
 ) -> str:
-    """Inserta una denuncia de siniestro y devuelve el número de reclamo."""
+    """Inserta una denuncia de siniestro y devuelve el número de reclamo.
+
+    ``fundamento`` es el motivo del dictamen: se guarda para poder explicarlo
+    cuando el cliente consulta el reclamo.
+    """
     conn = get_conn()
     cur = conn.cursor()
 
@@ -251,8 +262,9 @@ def registrar_siniestro(
         """
         INSERT INTO siniestros
             (numero_poliza, fecha_ocurrencia, fecha_denuncia, tipo_siniestro,
-             hubo_lesionados, descripcion_usuario, estado_reclamo, dictamen_ia)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             hubo_lesionados, descripcion_usuario, estado_reclamo, dictamen_ia,
+             fundamento_ia)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             numero_poliza,
@@ -263,6 +275,7 @@ def registrar_siniestro(
             descripcion,
             estado,
             dictamen,
+            fundamento,
         ),
     )
     conn.commit()
@@ -395,36 +408,67 @@ def consultar_polizas_por_dni(dni: str) -> str:
     return f"Titular: {rows[0]['nombre_completo']}\n" + "\n".join(partes)
 
 
+def _fecha_legible(texto: str | None) -> str:
+    """'2026-09-23' -> '23/09/2026'; '2026-09-23 22:02:42' -> '23/09/2026 a las 22:02'."""
+    if not texto:
+        return "sin dato"
+    try:
+        if len(texto) > 10:
+            return datetime.strptime(texto[:16], "%Y-%m-%d %H:%M").strftime("%d/%m/%Y a las %H:%M")
+        return datetime.strptime(texto, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        return texto
+
+
 def consultar_estado_reclamo(numero_reclamo: str) -> str:
-    """Devuelve el estado y dictamen de un reclamo por su número."""
+    """Devuelve la ficha completa de un reclamo por su número.
+
+    Incluye el vehículo, qué pasó y cuándo, el relato del cliente, el dictamen
+    con su motivo y el estado. Antes devolvía solo el tipo, el dictamen y el
+    estado, y el asistente respondía únicamente "está en estado Iniciado".
+    """
     try:
         numero = int(numero_reclamo)
     except (TypeError, ValueError):
         return f"No se encontró ningún reclamo con el número '{numero_reclamo}'."
 
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
+    row = conn.execute(
         """
         SELECT s.id_siniestro, s.numero_poliza, s.tipo_siniestro,
-               s.dictamen_ia, s.estado_reclamo, s.fecha_denuncia, p.patente
+               s.fecha_ocurrencia, s.fecha_denuncia, s.hubo_lesionados,
+               s.descripcion_usuario, s.dictamen_ia, s.fundamento_ia,
+               s.estado_reclamo, p.patente, p.producto,
+               v.marca, v.modelo, c.nombre_completo
         FROM siniestros s
         JOIN polizas p ON s.numero_poliza = p.numero_poliza
+        JOIN vehiculos v ON p.patente = v.patente
+        JOIN clientes c ON p.dni_titular = c.dni
         WHERE s.id_siniestro = ?
         """,
         (numero,),
-    )
-    row = cur.fetchone()
+    ).fetchone()
     conn.close()
 
     if not row:
         return f"No se encontró ningún reclamo con el número #{numero_reclamo}."
 
+    lesionados = "con lesionados" if row["hubo_lesionados"] else "sin lesionados"
+    motivo = row["fundamento_ia"] or (
+        "no quedó registrado (el reclamo es anterior a que se guardara el motivo)"
+    )
     return (
-        f"Reclamo #{row['id_siniestro']} | Póliza {row['numero_poliza']} "
-        f"(patente {row['patente']})\n"
-        f"Tipo: {row['tipo_siniestro']} | Dictamen: {row['dictamen_ia']}\n"
-        f"Estado: {row['estado_reclamo']} | Denunciado: {row['fecha_denuncia']}"
+        f"Reclamo #{row['id_siniestro']}\n"
+        f"Vehículo: {row['marca']} {row['modelo']}, patente {row['patente']} "
+        f"(póliza {row['numero_poliza']}, producto {row['producto']}), "
+        f"titular {row['nombre_completo']}\n"
+        f"Siniestro: {row['tipo_siniestro']}, ocurrido el "
+        f"{_fecha_legible(row['fecha_ocurrencia'])}, {lesionados}\n"
+        f'Relato del cliente: "{row["descripcion_usuario"]}"\n'
+        f"Denunciado el {_fecha_legible(row['fecha_denuncia'])}\n"
+        f"Dictamen: {row['dictamen_ia']}\n"
+        f"Motivo del dictamen: {motivo}\n"
+        f"Estado del reclamo: {row['estado_reclamo']}"
     )
 
 

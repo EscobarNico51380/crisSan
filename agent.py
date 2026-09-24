@@ -282,7 +282,10 @@ PROMPT_RESPONDER = (
     "que falten (patente, DNI o número de reclamo).\n"
     "3. Español rioplatense, claro y directo. Sin muletillas iniciales "
     "('¡Claro!', '¡Por supuesto!'). Si el usuario saluda, devolvé el saludo.\n"
-    "4. Si se registró un siniestro, mencioná su número de reclamo."
+    "4. Si se registró un siniestro, mencioná su número de reclamo.\n"
+    "5. Si informás sobre un reclamo, dá sus datos completos: número, vehículo "
+    "y patente, qué pasó y cuándo, el dictamen con su motivo y el estado. No "
+    "respondas solo con el estado."
 )
 
 # Para los mensajes de charla (saludos, agradecimientos, temas ajenos). Sin
@@ -636,6 +639,7 @@ def nodo_registrar(state: EstadoAgente) -> dict:
             "hubo_lesionados": dictamen["hubo_lesionados"],
             "descripcion": descripcion,
             "dictamen": dictamen["determinacion"],
+            "fundamento": dictamen["fundamento"],
         }
     )
     # Guardamos el número de reclamo para poder consultarlo en turnos siguientes.

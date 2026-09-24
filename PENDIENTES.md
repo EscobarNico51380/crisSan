@@ -28,6 +28,7 @@ No hace falta notebook.
 | El historial que se manda al LLM crecía sin límite | ✅ Ventana + resumen | `d5e8091` |
 | Al saludar, responde pidiendo la patente | ✅ | `7e42d4f` |
 | Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | `333af5d` |
+| Al consultar un reclamo respondía solo "está en estado Iniciado" | 🔶 Se guarda el motivo y la herramienta devuelve la ficha completa (este commit); el modelo chico igual respondió solo el estado | Propuesta: que la ficha sea la respuesta, armada por el código |
 | Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | `a48070e` |
 | "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ⏳ Visto con el modelo chico | Revisar con el principal |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
@@ -82,7 +83,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Tarea | Estado |
 |---|---|
 | `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | `d291f74` |
-| Reorganizar la documentación: se borra `ONBOARDING.md` (lo cubre el README) y `SETUP.md` pasa a ser `AGENTS.md`, la guía interna para el equipo y para asistentes de IA (`CLAUDE.md` la importa) | ✅ | (este commit) |
+| Reorganizar la documentación: se borra `ONBOARDING.md` (lo cubre el README) y `SETUP.md` pasa a ser `AGENTS.md`, la guía interna para el equipo y para asistentes de IA (`CLAUDE.md` la importa) | ✅ | `3085cb5` |
 | Armar el zip de la entrega: sin `.venv` ni `data/modelos`, sin los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`), con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
 | Probar la instalación desde cero con el zip, siguiendo solo el README, en Windows y en Linux | ⏳ |
 

@@ -41,6 +41,7 @@ def registrar_siniestro(
     hubo_lesionados: int,
     descripcion: str,
     dictamen: str,
+    fundamento: str = "",
 ) -> str:
     """Registra una denuncia de siniestro en la base relacional.
 
@@ -53,6 +54,7 @@ def registrar_siniestro(
         hubo_lesionados=hubo_lesionados,
         descripcion=descripcion,
         dictamen=dictamen,
+        fundamento=fundamento,
     )
 
 
