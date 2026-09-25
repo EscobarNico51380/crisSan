@@ -45,6 +45,7 @@ from config import (
     HISTORIAL_MENSAJES_A_CONSERVAR,
     HISTORIAL_RESUMEN_CHARS,
     HISTORIAL_UMBRAL_RESUMEN,
+    PLAZO_DENUNCIA_DIAS,
 )
 from rag import buscar_exclusiones
 from tools import (
@@ -200,6 +201,7 @@ class EstadoAgente(TypedDict):
     dictamen: dict  # dictamen estructurado del siniestro
     siniestro_registrado: str  # resultado del registro del siniestro
     reclamo_resultado: str  # ficha del reclamo consultado
+    reclamo_ya_denunciado: str  # reclamo existente del mismo hecho, si lo hay
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +466,7 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
         "siniestro_registrado": "",
         "reclamo_resultado": "",
         "exclusiones": "",
+        "reclamo_ya_denunciado": "",
     }
 
 
@@ -497,6 +500,8 @@ def nodo_consultar_reclamo(state: EstadoAgente) -> dict:
     datos = database.obtener_reclamo(numero)
     if datos:
         texto = database.formatear_reclamo(datos, markdown=True)
+        if state.get("reclamo_ya_denunciado"):
+            texto = "Ese hecho ya está denunciado. Este es tu reclamo:\n\n" + texto
     else:
         texto = (
             f"No encontré ningún reclamo con el número #{numero}. "
@@ -552,9 +557,9 @@ def _ddmmaaaa(fecha: date) -> str:
 
 
 def motivo_de_rechazo_administrativo(
-    poliza: dict | None, fecha_siniestro: date
+    poliza: dict | None, fecha_siniestro: date, hoy: date | None = None
 ) -> str | None:
-    """Controla, sin el LLM, que la póliza estuviera vigente y paga.
+    """Controla, sin el LLM, la vigencia, el plazo de denuncia y el pago.
 
     Devuelve el motivo del rechazo, o ``None`` si la póliza está en regla.
     Son comparaciones de fechas y de un estado guardado en la base: no hay
@@ -577,6 +582,17 @@ def motivo_de_rechazo_administrativo(
             f"La póliza {poliza['numero_poliza']} todavía no estaba vigente en la "
             f"fecha del siniestro: empezó el {_ddmmaaaa(inicio)} y el siniestro "
             f"es del {_ddmmaaaa(fecha_siniestro)}."
+        )
+    # Plazo de denuncia: el que llega acá es un hecho que no estaba
+    # denunciado (los ya denunciados se detectan antes), así que la denuncia es
+    # hoy. Si pasaron más de 72 horas, llegó tarde.
+    hoy = hoy or date.today()
+    if (hoy - fecha_siniestro).days > PLAZO_DENUNCIA_DIAS:
+        return (
+            f"La denuncia llegó fuera de plazo: el hecho ocurrió el "
+            f"{_ddmmaaaa(fecha_siniestro)} y se denuncia el {_ddmmaaaa(hoy)}. "
+            f"El manual pide denunciar el siniestro dentro de las 72 horas de "
+            f"ocurrido el hecho."
         )
     if poliza["estado_pago"].strip().lower() != "al dia":
         return (
@@ -626,11 +642,27 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     # es futura, se toma la de hoy. Si la póliza no estaba en regla, el
     # dictamen es "Rechazado" con un fundamento escrito por el sistema, sin
     # importar lo que haya dicho el modelo.
-    fecha_siniestro = _fecha_valida(resultado.fecha_ocurrencia, date.today())
+    hoy = date.today()
+    fecha_siniestro = _fecha_valida(resultado.fecha_ocurrencia, hoy)
+
+    # ¿Ese hecho ya estaba denunciado? "Me robaron el auto el 10 de mayo" no
+    # implica que la denuncia se haga ahora: el cliente puede estar hablando de
+    # un reclamo que ya hizo. Lo decide la base, no la redacción: si hay un
+    # reclamo de ese auto con esa fecha, se le muestra y no se registra otro.
+    existente = database.buscar_reclamo_existente(
+        state.get("patente", ""), fecha_siniestro.isoformat()
+    )
+    if existente:
+        return {
+            "dictamen": {},
+            "reclamo": str(existente),
+            "reclamo_ya_denunciado": str(existente),
+        }
+
     determinacion = resultado.determinacion
     fundamento = resultado.fundamento
     motivo = motivo_de_rechazo_administrativo(
-        database.obtener_vigencia(state.get("patente", "")), fecha_siniestro
+        database.obtener_vigencia(state.get("patente", "")), fecha_siniestro, hoy
     )
     if motivo:
         determinacion, fundamento = "Rechazado", motivo
@@ -856,7 +888,13 @@ def construir_agente():
         rutear_desde_clausulas,
         {"emitir_dictamen": "emitir_dictamen", "responder": "responder"},
     )
-    grafo.add_edge("emitir_dictamen", "registrar")
+    # Si el hecho ya estaba denunciado, se muestra ese reclamo en lugar de
+    # registrar un duplicado.
+    grafo.add_conditional_edges(
+        "emitir_dictamen",
+        lambda s: "consultar_reclamo" if s.get("reclamo_ya_denunciado") else "registrar",
+        {"consultar_reclamo": "consultar_reclamo", "registrar": "registrar"},
+    )
     grafo.add_edge("registrar", "responder")
     grafo.add_edge("responder", "compactar")
     grafo.add_edge("compactar", END)

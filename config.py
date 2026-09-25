@@ -82,6 +82,14 @@ PRECIOS_USD_POR_MILLON = {
 }
 
 
+# --- Plazo de denuncia -----------------------------------------------------
+# El manual pide denunciar cualquier siniestro dentro de las 72 horas de
+# ocurrido el hecho (pág. 25 y 26); la Ley de Seguros 17.418 (art. 46) fija 3
+# días, bajo pena de perder la indemnización. Como la fecha del siniestro se
+# conoce sin hora, se cuenta en días.
+PLAZO_DENUNCIA_DIAS = 3
+
+
 def ensure_dirs() -> None:
     """Crea las carpetas de datos si todavía no existen."""
     DATA_DIR.mkdir(exist_ok=True)

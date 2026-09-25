@@ -525,3 +525,26 @@ def obtener_vigencia(patente: str) -> dict | None:
     ).fetchone()
     conn.close()
     return dict(fila) if fila else None
+
+
+def buscar_reclamo_existente(patente: str, fecha_ocurrencia: str) -> int | None:
+    """Número del reclamo ya registrado para ese auto y esa fecha, si existe.
+
+    Sirve para no registrar dos veces el mismo hecho: si el cliente menciona un
+    siniestro que ya denunció (por ejemplo, para saber cómo va), se le muestra
+    ese reclamo en lugar de abrir otro.
+    """
+    conn = get_conn()
+    fila = conn.execute(
+        """
+        SELECT s.id_siniestro
+        FROM siniestros s
+        JOIN polizas p ON s.numero_poliza = p.numero_poliza
+        WHERE p.patente = ? AND s.fecha_ocurrencia = ?
+        ORDER BY s.id_siniestro DESC
+        LIMIT 1
+        """,
+        (patente.strip().upper(), fecha_ocurrencia),
+    ).fetchone()
+    conn.close()
+    return fila["id_siniestro"] if fila else None

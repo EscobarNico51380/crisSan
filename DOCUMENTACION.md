@@ -227,6 +227,7 @@ se mantiene acotado con una ventana + resumen (§16).
 | 27 | Al agotarse el cupo diario, el chat mostraba el error crudo de la API, con el número de organización de Groq | `app.py` y `main.py` mostraban el texto de la excepción tal cual | `mensaje_para_el_usuario` lo traduce a *"El sistema no puede responder consultas en este momento. Probá de nuevo en 21 minutos."*, calculando la espera que informa la API. El detalle técnico se imprime en la terminal. Además se verificó que el cupo es **por modelo** (con `gpt-oss-120b` agotado, `gpt-oss-20b` respondía con la misma key), y se corrigió el comentario de `config.py` que decía lo contrario |
 | 28 | Una póliza vencida salía cubierta | El prompt del dictamen no pedía comparar la fecha del siniestro con la vigencia, y el modelo no lo hacía aunque tenía las dos fechas a la vista | La vigencia y el pago los controla el código después del dictamen; si no están en regla, el dictamen pasa a Rechazado con un fundamento del sistema (§21) |
 | 29 | Al consultar un reclamo, respondía solo "El reclamo #43 está en estado Iniciado" | La herramienta devolvía pocos datos, el motivo del dictamen no se guardaba, y el LLM resumía la ficha: con el modelo de respaldo, incluso después de pedirle en el prompt todos los datos, respondió solo "Iniciado." | Se guarda el motivo (columna `fundamento_ia`, con migración automática para las bases existentes) y **la respuesta es la ficha armada por el código**, sin pasar por el LLM: siempre completa, y el turno pasa de ~4.000 a ~900 tokens (solo la clasificación). Además, el ruteo mira también la pregunta reescrita ("¿y por qué me lo aprobaron?" → "¿Por qué me aprobaron el reclamo #47?"), y al consultar un reclamo el agente recuerda la patente de ese auto |
+| 30 | El plazo de denuncia se evaluaba distinto según la redacción: "me robaron el auto el 10 de mayo" se cubría y "…y recién ahora hago la denuncia" se rechazaba | Lo decidía el modelo leyendo el relato, y una fecha pasada no alcanza para saber si la denuncia se hace ahora o si el cliente habla de un reclamo que ya hizo. Además, el mismo hecho denunciado dos veces generaba dos reclamos | Lo decide el código mirando la base: si ya hay un reclamo de ese auto con esa fecha, se muestra ese reclamo y no se registra otro; si no, la denuncia es de hoy y, si pasaron más de 72 horas desde el hecho, se rechaza con un motivo escrito por el sistema (§24) |
 
 ---
 
@@ -936,4 +937,24 @@ siquiera con `temperature=0`: una vez de cinco, el modelo le dio más peso a
   Seguros (17.418, art. 46) fija 3 días bajo pena de perder la indemnización,
   salvo caso fortuito o fuerza mayor. Una frase como *"me robaron el auto el 10
   de mayo"* no alcanza para saber que la denuncia se hace ahora: el cliente puede
-  estar consultando un reclamo que ya hizo. Pendiente de implementar.
+  estar consultando un reclamo que ya hizo.
+
+**Implementación del plazo de denuncia.** Lo decide el código mirando la base, no
+la redacción:
+
+1. Si ya hay un reclamo de ese auto con esa fecha (`database.buscar_reclamo_existente`),
+   el cliente habla de algo que ya denunció: se le muestra ese reclamo y no se
+   registra otro. De paso, esto evita registrar dos veces el mismo hecho.
+2. Si no hay ninguno, la denuncia es de hoy. Si pasaron más de 3 días desde el
+   hecho (`PLAZO_DENUNCIA_DIAS`, en `config.py`), `motivo_de_rechazo_administrativo`
+   la rechaza con un motivo escrito por el sistema.
+
+| Prueba | Resultado |
+|---|---|
+| Hecho de hoy, de hace 3 días, de hace 4 días, del 10/05 (sin API) | En plazo, en plazo, fuera de plazo, fuera de plazo |
+| *Me robaron el auto AJ222NP el 10 de mayo de 2026* | **Rechazado**: *"la denuncia se presentó fuera del plazo de 72 horas (el hecho ocurrió el 10/05/2026 y la denuncia se recibió el 25/09/2026)"*. Se registró como reclamo |
+| El mismo mensaje, en otra conversación | *"Ese hecho ya está denunciado. Este es tu reclamo:"* con la ficha. **Ningún reclamo nuevo** |
+| *Me robaron el auto AC456BD* (hecho de hoy) | **Cubierto**: el plazo no interfiere |
+
+**Limitación:** la ley admite la denuncia tardía por caso fortuito o fuerza mayor
+(por ejemplo, una internación). El sistema no lo contempla: rechaza igual.
