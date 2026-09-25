@@ -51,7 +51,10 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
 | Elegir el modelo desde la web (el otro queda de respaldo) | ✅ | `7e986c3` |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | 🔶 Casi | `llm.py` ya crea los modelos con `make_llm` y los nombres están en `config.py`. Falta poder elegir otro proveedor (OpenAI, Ollama) |
-| Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí |
+| Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ Nicolás lo tiene empezado, sin subir | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí. Criterio para las herramientas: pocas, bien descritas y sin superponerse, porque cada una se describe en el prompt en cada consulta y con más opciones el modelo se equivoca más al elegir |
+| Herramienta nueva: listar los reclamos de un cliente ("¿qué reclamos tengo?") | ⏳ | Hoy no se puede responder sin el número de reclamo. Conviene sumarla junto con el ReAct |
+| Herramienta nueva: pedir una grúa o asistencia | ⏳ | Estaba en el diseño original (`IdeaTP.md`, `pedir_grua`) y nunca se hizo. Simulada, como el resto de los datos |
+| Herramienta nueva: calcular cuánto paga el cliente (costo de la reparación menos la franquicia) | ⏳ | Es una cuenta: la hace el código, no el modelo. Como la calculadora del notebook de agentes de la cátedra |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |
 | Interpretar imágenes enviadas por el cliente | ⏳ | Prometido en el mail al profesor. Modelo verificado: `qwen/qwen3.8-27b` (~1.300-1.800 tokens por foto). Falta decidir si describe la foto para el dictamen actual o si dictamina él |
 | Exclusiones por gas licuado (GLP) y por uso para transporte de pasajeros | ⏳ A confirmar | El manual las tiene; se sumarían con el mismo mecanismo que el GNC |
@@ -79,6 +82,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Entregable | Estado |
 |---|---|
 | Slides de la defensa | ⏳ |
+| Mostrar el grafo coloreado según quién decide cada paso (código, RAG o LLM), con el recorrido de una consulta y los tres errores de ejemplo (ver `DOCUMENTACION.md`) | ⏳ |
 | Guion y grabación del video (vence el 30/09) | ⏳ |
 | Vaciar la tabla de siniestros antes de grabar (las pruebas quedan como precedentes) | ⏳ |
 | Repaso del TP1 | ⏳ |

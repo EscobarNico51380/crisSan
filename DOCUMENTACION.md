@@ -958,3 +958,100 @@ la redacción:
 
 **Limitación:** la ley admite la denuncia tardía por caso fortuito o fuerza mayor
 (por ejemplo, una internación). El sistema no lo contempla: rechaza igual.
+
+
+---
+
+## 25. Quién decide qué: código, RAG y LLM
+
+El sistema tiene tres piezas con tres trabajos distintos. Distinguirlas es la
+clave para entender cómo se arma cada respuesta.
+
+| Pieza | Qué hace | Qué **no** hace | Cómo se comporta |
+|---|---|---|---|
+| **RAG** | **Busca** en el manual los fragmentos relevantes y se los entrega al modelo | **No decide nada**: no sabe si algo está cubierto, solo trae texto | Siempre igual ante la misma pregunta |
+| **LLM** | **Interpreta**: entiende el mensaje, lee los fragmentos que trajo el RAG, razona si el caso encaja en una cobertura o exclusión, y redacta | No sabe nada del cliente ni del manual por sí mismo: solo lo que recibe en el prompt | Puede variar, aun con `temperature=0` |
+| **Código** (reglas + base de datos) | **Verifica hechos**: datos de la póliza, fechas, vigencia, pago, plazo de denuncia, duplicados, patente y DNI | No interpreta texto libre | Siempre igual |
+
+Una analogía: el **RAG es el bibliotecario**, que trae las páginas del manual
+que hablan del tema; el **LLM es el perito**, que las lee, entiende el caso y
+opina; el **código es el área administrativa**, que revisa en el sistema si la
+póliza está paga y vigente y si la denuncia llegó en plazo.
+
+### El grafo, coloreado según quién decide
+
+Azul: código · Verde: RAG · Violeta: LLM · Amarillo: LLM y código en el mismo
+paso. Las líneas punteadas son decisiones del ruteo; las continuas, pasos fijos.
+
+```mermaid
+graph TD
+    inicio([Mensaje del cliente]) --> clasificar
+    clasificar["clasificar<br/>LLM: intención y pregunta reescrita<br/>Código: patente, DNI y reclamo"]:::mixto
+    clasificar -. charla .-> responder
+    clasificar -. pregunta general .-> consultar_clausulas
+    clasificar -. menciona un reclamo .-> consultar_reclamo
+    clasificar -. da un DNI .-> listar_polizas
+    clasificar -. falta la patente .-> pedir_patente
+    clasificar -. consulta o denuncia .-> consultar_poliza
+    consultar_poliza["consultar_poliza<br/>Código: SQL"]:::codigo
+    consultar_clausulas["consultar_clausulas<br/>RAG: busca en el manual<br/>y las exclusiones si el auto tiene GNC"]:::rag
+    emitir_dictamen["emitir_dictamen<br/>LLM: ¿lo cubre el manual?<br/>Código: vigencia, pago, plazo, duplicado"]:::mixto
+    registrar["registrar<br/>Código: guarda el reclamo"]:::codigo
+    responder["responder<br/>LLM: redacta la respuesta"]:::llm
+    consultar_reclamo["consultar_reclamo<br/>Código: ficha del reclamo"]:::codigo
+    listar_polizas["listar_polizas<br/>Código: SQL"]:::codigo
+    pedir_patente["pedir_patente<br/>Código: mensaje fijo"]:::codigo
+    compactar["compactar<br/>LLM: resume si la charla es larga"]:::llm
+    consultar_poliza --> consultar_clausulas
+    consultar_clausulas -. denuncia .-> emitir_dictamen
+    consultar_clausulas -. consulta .-> responder
+    emitir_dictamen -. ya estaba denunciado .-> consultar_reclamo
+    emitir_dictamen -. hecho nuevo .-> registrar
+    registrar --> responder
+    responder --> compactar
+    consultar_reclamo --> compactar
+    listar_polizas --> compactar
+    pedir_patente --> compactar
+    compactar --> fin([Respuesta])
+    classDef codigo fill:#dbeafe,stroke:#1d4ed8,color:#000
+    classDef rag fill:#dcfce7,stroke:#15803d,color:#000
+    classDef llm fill:#f3e8ff,stroke:#7e22ce,color:#000
+    classDef mixto fill:#fef3c7,stroke:#b45309,color:#000
+```
+
+El grafo que efectivamente corre se puede generar desde el código, así que este
+diagrama se puede verificar contra él:
+
+```python
+from agent import agente
+print(agente.get_graph().draw_mermaid())
+```
+
+### Una consulta, paso a paso
+
+Con *"Me robaron el auto AJ222NP el 10 de mayo"*:
+
+| Paso | Quién |
+|---|---|
+| Sacar la patente del mensaje | Código (expresión regular) |
+| Entender que es una denuncia y que "el 10 de mayo" es 10/05/2026 | LLM |
+| Traer la póliza, el plan y si el auto tiene GNC | Código (SQL) |
+| Traer qué dice el manual sobre robo (y las exclusiones por GNC, si corresponde) | RAG |
+| Decidir si el robo está cubierto según el manual | LLM |
+| Verificar vigencia, pago, plazo de denuncia y si ya estaba denunciado; si algo no está en regla, el dictamen pasa a Rechazado | Código |
+| Registrar el reclamo | Código |
+| Redactar la respuesta | LLM |
+
+### Tres errores, uno por pieza
+
+1. **Falla del RAG: el GNC.** El modelo razonaba bien, pero **la regla nunca le
+   llegaba**: el buscador no traía la exclusión porque nadie escribe "tengo GNC"
+   al denunciar un robo. El arreglo fue en la búsqueda, no en el modelo (§14).
+2. **Falla del LLM: el Cruze.** **La regla le llegaba** (se verificó) y aun así,
+   una vez de cinco, razonó mal. Es un límite del modelo; se decidió aceptarlo y
+   explicarlo (§24).
+3. **Una tarea mal asignada: la póliza vencida.** Comparar dos fechas **nunca fue
+   trabajo para el modelo**. Pasó al código y desde entonces no falla (§21).
+
+**En resumen:** el código decide lo que se puede calcular, el RAG le da al modelo
+el texto que necesita, y el modelo interpreta lo que no se puede calcular.
