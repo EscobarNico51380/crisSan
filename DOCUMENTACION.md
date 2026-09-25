@@ -922,3 +922,18 @@ siquiera con `temperature=0`: una vez de cinco, el modelo le dio más peso a
   dentro de las 72 horas; sin esa frase, se cubrió. En los dos casos la denuncia
   llegó cuatro meses después: el plazo debería evaluarse igual.
 - **Un error esporádico en el caso del Cruze** (1 de 5), explicado arriba.
+
+**Decisiones del grupo:**
+
+- **El error esporádico del Cruze se acepta** y se explica en la defensa como un
+  límite de los LLM.
+- **Los precedentes quedan como están:** cuando no hay casos del mismo producto
+  se siguen mostrando los de otros, porque la prueba con el precedente sospechoso
+  no mostró que confunda.
+- **Plazo de denuncia: si queda claro que la denuncia llegó tarde, se rechaza.**
+  El manual pide denunciar cualquier siniestro dentro de las 72 horas de ocurrido
+  el hecho (pág. 25 y 26), pero no dice qué pasa si no se cumple; la Ley de
+  Seguros (17.418, art. 46) fija 3 días bajo pena de perder la indemnización,
+  salvo caso fortuito o fuerza mayor. Una frase como *"me robaron el auto el 10
+  de mayo"* no alcanza para saber que la denuncia se hace ahora: el cliente puede
+  estar consultando un reclamo que ya hizo. Pendiente de implementar.
