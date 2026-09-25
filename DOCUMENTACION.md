@@ -40,35 +40,44 @@ La fuente de verdad es el manual de San Cristóbal (`poliza_sanCristobal.pdf`,
 ## 3. Arquitectura general
 
 ```
-Usuario (Streamlit / consola)
+Usuario (chat web, con fotos / consola)
         │
         ▼
-┌─────────────────────────────────────────────────────┐
-│              GRAFO DE ESTADO (LangGraph)            │
-│                                                     │
-│  clasificar ──┬── responder (charla)                │
-│   (LLM)       ├── consultar_clausulas (general)     │
-│   + regex     ├── listar_polizas (DNI)              │
-│  patente/DNI  ├── pedir_patente                     │
-│               └── consultar_poliza → cláusulas →    │
-│                       emitir_dictamen → registrar   │
-│                                                     │
-│  Memoria: MemorySaver + thread_id + resumen         │
-└──────────┬───────────────────────┬──────────────────┘
-           │                       │
-     ┌─────▼─────┐          ┌──────▼──────┐
-     │  SQLite    │          │  ChromaDB   │
-     │ (pólizas,  │          │ (manual     │
-     │ siniestros)│          │  vectorizado)│
-     └───────────┘          └─────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                 GRAFO DE ESTADO (LangGraph)                   │
+│                                                               │
+│  analizar_foto (visión) → clasificar (LLM + regex)            │
+│     ├── responder (charla)                                    │
+│     ├── consultar_clausulas (pregunta general, RAG)           │
+│     ├── listar_polizas (DNI)                                  │
+│     ├── consultar_reclamo (ficha armada por código)           │
+│     ├── pedir_patente                                         │
+│     └── consultar_poliza (SQL) → consultar_clausulas (RAG)    │
+│            → emitir_dictamen (LLM + controles con código)     │
+│            → registrar → responder                            │
+│  Todos los caminos terminan en compactar (resume si hace falta)│
+│  Memoria: checkpointer + thread_id + resumen                  │
+└───────────┬───────────────────────┬───────────────┬──────────┘
+            │                       │               │
+      ┌─────▼──────┐        ┌───────▼──────┐  ┌─────▼──────────┐
+      │  SQLite    │        │  ChromaDB    │  │  Groq          │
+      │ (pólizas,  │        │ (manual      │  │ gpt-oss-120b,  │
+      │ reclamos)  │        │ vectorizado) │  │ respaldo 20b,  │
+      └────────────┘        └──────────────┘  │ visión qwen)   │
+                                              └────────────────┘
 ```
 
-**Flujo principal del dictamen (siniestro):**
+**Flujo de una denuncia:**
 
 ```
-extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
-        → consultar precedentes → emitir dictamen (LLM) → registrar siniestro
+foto (si hay) → patente (regex) → póliza (SQL) → cláusulas y exclusiones (RAG)
+  → precedentes → dictamen (LLM) → comparación foto-relato (LLM, llamada aparte)
+  → controles (código: vigencia, pago, plazo, duplicado, patente de la foto)
+  → registrar → responder
 ```
+
+El grafo completo, coloreado según quién decide cada paso (código, RAG o LLM),
+está en §25.
 
 ---
 
@@ -78,13 +87,14 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 |---|---|---|
 | Orquestación | **LangGraph** (`StateGraph`) | Control explícito del flujo (grafo de estado), no un ReAct a ciegas |
 | Framework | **LangChain** (`@tool`, retriever, loaders) | Requisito del enunciado |
-| LLM | **Groq** — `openai/gpt-oss-120b` | Free tier: 200K tokens/día por modelo y por cuenta, 30 req/min. Rápido (500 tps) |
+| LLM | **Groq** — `openai/gpt-oss-120b`, con `openai/gpt-oss-20b` de respaldo | Free tier: 200K tokens/día por modelo y por cuenta, 30 req/min. Rápido (500 tps). Si el principal agota su cupo, pasa solo al respaldo (§20) |
+| Visión | **Groq** — `qwen/qwen3.8-27b` | El único modelo de Groq que acepta imágenes. Solo describe la foto: no decide (§26) |
 | Structured output | `json_schema` (nativo de Groq) | Fuerza el schema del lado del servidor |
 | Base vectorial | **ChromaDB** (espacio coseno) | Persistencia local, simple |
 | Embeddings | **`intfloat/multilingual-e5-base`** | Entrenado específicamente para retrieval |
 | Retrieval | **Híbrido** (BM25 + semántico) | `EnsembleRetriever` + `rank_bm25` |
 | Base relacional | **SQLite** | Mock de la fuente de datos transaccional |
-| Frontend | **Streamlit** | Interfaz de chat rápida |
+| Frontend | **Streamlit** | Chat con fotos, recorrido guiado, costo por consulta y selector de modelo |
 | Config | `python-dotenv` + `.env` | Secretos fuera del código |
 | PDF | `pypdf` + `PyPDFLoader` | Carga del manual |
 
@@ -114,9 +124,9 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 | `consultar_datos_poliza` | patente | Consulta SQL: póliza, titular, producto, franquicia, estado |
 | `consultar_clausulas_poliza` | consulta | Búsqueda RAG híbrida en el manual |
 | `consultar_polizas_por_dni` | dni | Lista las pólizas de un titular |
-| `consultar_estado_reclamo` | número de reclamo | Devuelve el estado y dictamen de un reclamo |
-| `consultar_siniestros_previos` | (límite) | Devuelve siniestros históricos con su dictamen (precedentes) |
-| `registrar_siniestro` | patente, tipo, fecha, lesionados, dictamen | INSERT en `siniestros` + número de reclamo |
+| `consultar_estado_reclamo` | número de reclamo | Devuelve la ficha completa del reclamo: vehículo, hecho, relato, foto, dictamen, motivo y estado |
+| `consultar_siniestros_previos` | límite, tipo, patente (opcionales) | Devuelve siniestros históricos con su dictamen (precedentes), del mismo producto si se da la patente |
+| `registrar_siniestro` | patente, tipo, fecha, lesionados, dictamen, motivo, descripción de la foto | INSERT en `siniestros` + número de reclamo |
 
 ---
 
@@ -124,19 +134,21 @@ extraer patente → consultar póliza (SQL) → buscar cláusulas (RAG híbrido)
 
 **Estado** (`EstadoAgente`): `messages`, `intencion`, `consulta`, `patente`, `dni`,
 `reclamo`, `datos_poliza`, `clausulas`, `exclusiones`, `dictamen`,
-`siniestro_registrado`, `reclamo_resultado`, `resumen`.
+`siniestro_registrado`, `reclamo_resultado`, `resumen`, `reclamo_ya_denunciado`,
+`foto`, `descripcion_foto`, `patente_foto`, `aviso_foto`.
 
 **Nodos:**
 
 | Nodo | Qué hace |
 |---|---|
+| `analizar_foto` | Si el mensaje trae una foto, el modelo de visión la describe; sin foto no hace nada (§26) |
 | `clasificar` | Extrae patente/DNI con **regex** + clasifica intención con LLM (`json_schema`). Ve los últimos mensajes y devuelve además la pregunta reescrita para que se entienda sola, que es la que se usa para buscar (§15) |
 | `pedir_patente` | Pide la patente si falta |
 | `listar_polizas` | Lista las pólizas de un DNI y pide elegir |
-| `consultar_reclamo` | Consulta el estado de un reclamo por su número |
+| `consultar_reclamo` | Responde con la ficha completa del reclamo, armada por código, sin LLM |
 | `consultar_poliza` | Llama a la tool de SQL |
 | `consultar_clausulas` | RAG híbrido sobre el manual; si el vehículo tiene GNC, además busca las exclusiones que dependen de eso (§14) |
-| `emitir_dictamen` | LLM emite determinación + precedentes |
+| `emitir_dictamen` | El LLM analiza la cobertura (póliza, cláusulas, exclusiones, precedentes, foto). Después, una llamada aparte compara foto y relato, y el código controla vigencia, pago, plazo de denuncia, duplicados y patente de la foto (§21, §24, §26). Si el hecho ya estaba denunciado, pasa a `consultar_reclamo` en vez de registrar |
 | `registrar` | INSERT del siniestro en SQLite |
 | `responder` | Genera la respuesta final en lenguaje natural |
 | `compactar` | Al final de cada turno: si el historial llegó a 12 mensajes, resume los viejos y deja los últimos 6 (§16) |
@@ -188,6 +200,22 @@ se mantiene acotado con una ventana + resumen (§16).
    del dictamen. Costo: más código que un `create_react_agent`.
 6. **Extracción determinística de patente/DNI (regex)** → robusta, no depende
    del LLM. Costo: menos flexible para formatos no previstos.
+7. **Controles con código después del dictamen** (vigencia, pago, plazo de
+   denuncia, duplicados, patente de la foto) → siempre dan lo mismo; el LLM
+   interpreta y el código verifica hechos (§21, §24, §25). Costo: reglas del
+   negocio escritas en el código.
+8. **Modelo de respaldo con disyuntor** → el sistema no se queda sin responder
+   por falta de cupo, y no reintenta el modelo agotado en cada consulta (§20).
+   Costo: el respaldo razona peor.
+9. **Una tarea por llamada al LLM** → la comparación foto-relato falló como regla
+   y como campo del dictamen, y funcionó como llamada aparte (§26). Costo: una
+   llamada más cuando hay foto.
+10. **El modelo de visión describe, no decide** → la decisión sigue con el modelo
+    principal y sus controles (§26). Costo: un modelo más, cinco veces más caro.
+11. **La ficha del reclamo sin LLM** → siempre completa, y el turno pasa de
+    ~4.000 a ~900 tokens. Costo: no puede agregar nada fuera de la ficha.
+12. **Memoria con ventana + resumen** → el historial no crece sin límite (§16).
+    Costo: el resumen puede deformar un detalle.
 
 ---
 
@@ -275,17 +303,31 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - ✅ Modelo de respaldo automático cuando el principal agota su cupo diario.
 - ✅ Selector de modelo en la web.
 - ✅ Fotos del cliente: un modelo de visión las describe y el dictamen las usa como evidencia.
-- ✅ Recorrido sugerido en la web: 10 consultas en orden, cada una con un botón, que muestran las funciones del sistema.
+- ✅ Recorrido sugerido en la web: 12 consultas en orden (2 con foto), cada una con un botón.
+- ✅ Preguntas de seguimiento y memoria con resumen para charlas largas.
+- ✅ Vigencia, pago y plazo de denuncia controlados con código.
+- ✅ Detección de reclamos duplicados (mismo auto, fecha y tipo de hecho).
+- ✅ Ficha completa del reclamo, con el motivo del dictamen.
+- ✅ Mensaje amigable ante errores de la API.
+- ✅ Instalación y arranque con un solo comando (`python iniciar.py`).
 
 ## 13. Limitaciones y mejoras futuras
 
-- La tabla de límites (pág 5) a veces rankea alto (falso positivo menor).
+- **El dictamen puede variar:** con el modelo principal, el robo del auto todo
+  riesgo con GNC salió cubierto 1 de 5 veces (§24). Se decidió aceptarlo y
+  explicarlo.
+- **El modelo de visión puede equivocarse** y es muy sensible a la redacción de
+  sus instrucciones (en una versión confundió granizo con nieve). Por eso no
+  decide: su descripción pasa por la comparación con el relato (§26).
+- **Fotos:** solo en la web y una por mensaje.
+- **El plazo de denuncia** no contempla caso fortuito o fuerza mayor (§24).
+- **Granizo o parabrisas sobre un auto con GNC:** el manual es ambiguo y la
+  respuesta depende del modelo (§14, §19).
+- Las exclusiones que dependen del vehículo solo contemplan el **GNC** (§14).
 - El modelado de GNC no distingue "declarado vs no declarado".
-- **Interpretación de imágenes (multimodal)** — pendiente del alcance original.
-  Verificado: `openai/gpt-oss-*` **no** acepta imágenes; `qwen/qwen3.8-27b` sí,
-  y está disponible en el free tier. Costo medido: 1.300–1.800 tokens por
-  imagen sobre un cupo de 200.000 diarios (~40-50 dictámenes con foto por día).
-- Las exclusiones que dependen del vehículo solo contemplan el **GNC** (ver §14).
+- La tabla de límites (pág 5) a veces rankea alto (falso positivo menor).
+- El agente no elige herramientas por sí mismo (patrón ReAct): el flujo es un
+  grafo determinístico. Está en desarrollo (ver `PENDIENTES.md`).
 
 ---
 
@@ -620,16 +662,16 @@ anteriores:
 |---|---|---|
 | *Me robaron el auto AC456BD* (C+ sin GNC) | Cubierto | ✅ Cubierto |
 | *Me robaron el auto AD789EF* (todo riesgo con GNC) | Rechazado | ✅ Rechazado, citando las exclusiones por GNC |
-| *Choque contra un poste con la AE321GH, se abollo la puerta* (plan A) | Rechazado | Pendiente |
-| *Me robaron el auto AG654JK* (plan B) | Cubierto | Pendiente |
-| *Choque contra un poste con la AG654JK, se abollo la puerta* (plan B) | Rechazado | Pendiente |
-| *Me robaron el auto AH111LM* (impaga) | Rechazado | Pendiente |
-| *Me robaron el auto AJ222NP* (vencida) | Rechazado | Pendiente |
+| *Choque contra un poste con la AE321GH, se abollo la puerta* (plan A) | Rechazado | ✅ Rechazado (batería final) |
+| *Me robaron el auto AG654JK* (plan B) | Cubierto | ✅ Cubierto (batería final) |
+| *Choque contra un poste con la AG654JK, se abollo la puerta* (plan B) | Rechazado | ✅ Rechazado (batería final) |
+| *Me robaron el auto AH111LM* (impaga) | Rechazado | ✅ Rechazado (batería final) |
+| *Me robaron el auto AJ222NP* (vencida) | Rechazado | ✅ Rechazado, por el control de vigencia con código (§21) |
 
 Los dos primeros confirman lo que no se podía demostrar con un solo auto con
 GNC: con el mismo plan y sin GNC el robo se cubre, y con GNC se rechaza incluso
-con el mejor plan. Los cinco restantes no llegaron a correr: se agotó el cupo
-diario de tokens de Groq (cada dictamen usa unos 9.000).
+con el mejor plan. Los cinco restantes se cortaron por el cupo diario y se
+corrieron después, en la batería final con el modelo principal (§24).
 
 
 ---
@@ -1171,3 +1213,60 @@ tipo con palabras variables ("Robo Total", "Hurto del vehículo").
 - Probar con **fotos propias** del grupo.
 - La comparación de la **patente de la foto** no se probó con una foto real:
   ninguna de las de ejemplo muestra la patente.
+
+
+---
+
+## 27. Plan de pruebas
+
+Todas las pruebas que se usaron para verificar el sistema, en un solo lugar:
+qué se prueba, qué se espera y cómo se corre. Los resultados obtenidos están en
+cada sección.
+
+### Sin gastar API (lo que decide el código)
+
+| Qué | Cómo | Esperado |
+|---|---|---|
+| Base de datos | `database.consultar_datos_poliza('AB123CD')`, `consultar_polizas_por_dni('30555777')`, reclamo `999` | Datos de la póliza; las 3 pólizas de Laura Gomez; "no se encontró" |
+| RAG | `buscar_clausulas('granizo')` | El ítem 10 (Granizo) de la pág. 17, con su encabezado |
+| Exclusiones por GNC | `buscar_exclusiones(CONSULTA_EXCLUSIONES_GNC, CLAVES_GNC)` | Las 3 exclusiones (pág. 10, 15 y 16), y no el texto de declarar el equipo |
+| Vigencia, pago y plazo | `motivo_de_rechazo_administrativo` con: póliza vigente; vencida; siniestro anterior al inicio; impaga; hecho de hace 3 días; hecho de hace 4 días | En regla; vencida; no vigente; pago pendiente; en plazo; fuera de plazo |
+| Duplicados | `familia_de_siniestro` y `buscar_reclamo_existente` con un robo de hoy ya registrado | "Robo total" → mismo hecho; "Granizo" → hecho distinto |
+| Disyuntor | `llm.invocar` con modelos simulados | Principal agotado → responde el respaldo y no se reintenta; al liberarse, vuelve el principal; los dos agotados → mensaje con la espera |
+| Mensajes de error | `mensaje_para_el_usuario` con el error real de Groq | "Probá de nuevo en 21 minutos" |
+| Costos | `costos.consumo_de` con 1M + 1M tokens | US$ 0,7500 (con la mitad en caché, 0,7125) |
+| Web | `AppTest` de Streamlit con un agente simulado | Los 12 botones del recorrido mandan su consulta (y su foto, los pasos 11 y 12); el selector cambia el modelo principal |
+
+### Con la API (lo que decide el modelo)
+
+Antes de cada bloque de denuncias, **vaciar la tabla `siniestros`**: los reclamos
+quedan como precedentes. Cada caso va en una conversación nueva, salvo los de
+varios turnos.
+
+| Área | Mensaje | Esperado |
+|---|---|---|
+| Charla | *Hola* / *Gracias!* / *asdasd qwerty* / *¿Cuánto está el dólar?* | Se presenta / agradece / pide reformular / aclara que no es su tema |
+| Consulta y memoria | *¿Qué plan tengo para la patente AB123CD?* → *¿Y cuándo vence?* | Plan D; "01/01/2027", clasificado como consulta |
+| Seguimiento | *¿Qué plan tengo para la patente AF987XX?* → *y me cubre el granizo?* | Pregunta reescrita con la patente; cita la cláusula del granizo |
+| Hipótesis | *Choqué contra un poste con la AF987XX* → *y si hubiera sido granizo?* | La segunda no registra reclamo |
+| GNC | Granizo, parabrisas, incendio y robo del AF987XX; granizo y robo del AB123CD | Cubierto (o peritaje), Cubierto, **Rechazado**, **Rechazado**, Cubierto, Cubierto |
+| Autos de prueba | Robo AC456BD; robo AD789EF; choque AE321GH; robo y choque AG654JK; robo AH111LM; robo AJ222NP | Cubierto; **Rechazado** (GNC); Rechazado (plan A); Cubierto y Rechazado (plan B); Rechazado (impaga); Rechazado (vencida) |
+| Plazo de denuncia | *Me robaron el auto AJ222NP el 10 de mayo de 2026*, dos veces | Rechazado por plazo; la segunda, "ya está denunciado" sin reclamo nuevo |
+| Reclamo | *¿En qué estado está mi reclamo #N?* → *¿Y por qué me lo aprobaron?* → *¿Y qué plan tengo en ese auto?* | Ficha completa; ficha con el motivo; plan del auto del reclamo |
+| Memoria larga | Charla de 8 turnos: en el 1 se dice algo que no queda en ningún dato (*"pienso vender el Focus"*); en el 7 se pregunta por eso | En el turno 6 se resume; en el 7 lo recuerda |
+| Fotos | Granizo + *granizo sobre la AC456BD*; choque + *granizo sobre la AB123CD*; parabrisas + *granizo sobre la AC456BD*; choque + *¿Me cubre esto? Es el AD789EF*; solo la foto; visión caída | Cubierto; **Requiere peritaje**; Cubierto; denuncia y Cubierto; pide la patente; aviso al principio |
+
+**Costo:** la batería completa usa ~170.000 tokens, casi todo el cupo diario del
+modelo principal. Conviene correrla con el cupo recién renovado y registrar qué
+modelo contestó cada caso: si entra el respaldo, ese resultado no vale para el
+principal.
+
+### Pruebas que faltan
+
+- **Los casos con foto, con el modelo principal** (se probaron con el respaldo).
+- **Fotos propias**, idealmente una donde se lea la patente (la comparación de
+  patentes no se probó con una foto real).
+- **El recorrido completo en la web, de punta a punta**, con el modelo principal,
+  antes de grabar el video.
+- **La instalación desde cero** con `python iniciar.py` en una carpeta nueva, en
+  Windows y en Linux.

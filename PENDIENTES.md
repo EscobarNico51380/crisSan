@@ -56,7 +56,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Herramienta nueva: pedir una grúa o asistencia | ⏳ | Estaba en el diseño original (`IdeaTP.md`, `pedir_grua`) y nunca se hizo. Simulada, como el resto de los datos |
 | Herramienta nueva: calcular cuánto paga el cliente (costo de la reparación menos la franquicia) | ⏳ | Es una cuenta: la hace el código, no el modelo. Como la calculadora del notebook de agentes de la cátedra |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |
-| Interpretar imágenes enviadas por el cliente | ✅ Una foto por mensaje en la web; el modelo de visión describe y el dictamen la usa como evidencia | (este commit) |
+| Interpretar imágenes enviadas por el cliente | ✅ Una foto por mensaje en la web; el modelo de visión describe y el dictamen la usa como evidencia | `9f7e9c3` |
 | Probar los dictámenes con foto con el modelo principal | ⏳ | Se probaron con el de respaldo porque el principal no tenía cupo |
 | Probar con fotos propias del grupo | ⏳ | Las de ejemplo son de Wikimedia Commons |
 | Exclusiones por gas licuado (GLP) y por uso para transporte de pasajeros | ⏳ A confirmar | El manual las tiene; se sumarían con el mismo mecanismo que el GNC |
