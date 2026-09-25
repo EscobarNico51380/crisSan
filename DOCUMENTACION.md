@@ -870,3 +870,55 @@ corta, volver a ejecutarlo retoma desde donde quedó.
 
 Queda pendiente la prueba completa desde cero (carpeta nueva, descargando todo),
 en Windows y en Linux.
+
+
+---
+
+## 24. Batería final con el modelo principal (25/09/2026)
+
+Con el cupo diario de `gpt-oss-120b` recién renovado, se corrieron juntas todas
+las pruebas de los días anteriores: 25 casos en seis bloques. Se registró qué
+modelo contestó cada caso: **todos los respondió el principal** (el respaldo
+nunca hizo falta). Se usaron 170.415 tokens. Antes de cada bloque de dictámenes
+se vació la tabla `siniestros`, y al terminar se restauró la base.
+
+| Bloque | Casos | Correctos |
+|---|---|---|
+| Consulta de reclamo y repreguntas | 3 | 3 (ver nota 1) |
+| Autos de prueba (planes A y B, impaga, vencida, GNC) | 7 | 6 (ver nota 2) |
+| Denuncia con fecha pasada ("el 10 de mayo") | 2 | 2 |
+| GNC (regresión) | 6 | 6 |
+| Preguntas de seguimiento | 3 conversaciones | 3 |
+| Saludo y charla | 4 | 4 |
+
+**Nota 1.** La verificación automática marcó como error *"¿Y qué plan tengo en
+ese auto?"* porque buscaba el texto literal `D c/fran`. La respuesta fue
+*"producto D con franquicia"*: es correcta.
+
+**Nota 2 — el robo del Chevrolet Cruze (todo riesgo, con GNC) salió
+*Cubierto*.** El mismo caso, con el mismo modelo, había dado *Rechazado* el
+23/09. Se repitió tres veces más: las tres dieron **Rechazado**, con las tres
+exclusiones por GNC recibidas y un fundamento correcto. Se probó también si la
+causa era un precedente engañoso (el robo del Gol Trend, C+ sin GNC, cubierto,
+que el filtro de precedentes muestra cuando no hay casos del mismo producto): con
+ese precedente cargado, también dio Rechazado. **Conclusión: 4 de 5 veces
+correcto.** Los modelos de lenguaje no son completamente deterministas, ni
+siquiera con `temperature=0`: una vez de cinco, el modelo le dio más peso a
+"todo riesgo cubre robo" que a la exclusión.
+
+**Qué se resolvió:**
+
+- Los casos de los autos nuevos que se habían cortado por el cupo pasaron con el
+  modelo principal: plan A (choque propio, rechazado), plan B (robo total
+  cubierto, choque parcial rechazado), impaga y vencida (rechazados).
+- *"Me robaron el auto AJ222NP el 10 de mayo de 2026"*, que el modelo chico había
+  clasificado como consulta, con el principal se clasificó como **denuncia**, con
+  la fecha correcta (10/05/2026), en las dos redacciones probadas.
+
+**Qué quedó a la vista:**
+
+- **Las dos redacciones del "10 de mayo" terminaron distinto.** Con *"…y recién
+  ahora hago la denuncia"* se rechazó porque el manual exige denunciar el robo
+  dentro de las 72 horas; sin esa frase, se cubrió. En los dos casos la denuncia
+  llegó cuatro meses después: el plazo debería evaluarse igual.
+- **Un error esporádico en el caso del Cruze** (1 de 5), explicado arriba.

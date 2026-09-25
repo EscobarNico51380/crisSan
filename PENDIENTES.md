@@ -30,7 +30,10 @@ No hace falta notebook.
 | Al agotarse el cupo, el chat mostraba el error técnico crudo | ✅ Mensaje amigable con la espera | `333af5d` |
 | Al consultar un reclamo respondía solo "está en estado Iniciado" | ✅ La ficha completa la arma el código, sin el LLM | `469418c`, `35fbdc5` |
 | Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | `a48070e` |
-| "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ⏳ Visto con el modelo chico | Revisar con el principal |
+| "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ✅ Con el modelo principal se clasifica bien (era el modelo chico) | batería final |
+| El plazo de denuncia (72 horas para el robo) se evalúa distinto según cómo se redacte | ⏳ A decidir | "…el 10 de mayo" se cubrió; "…el 10 de mayo y recién ahora hago la denuncia" se rechazó por el plazo. Se podría controlar con código, como la vigencia (fecha del siniestro contra fecha de denuncia). Falta decidir qué corresponde: ¿rechazar o *Requiere peritaje*? |
+| El robo del auto todo riesgo con GNC (AD789EF) salió *Cubierto* 1 de 5 veces | ⏳ A decidir | Variación del modelo, no un error de datos. Opciones: aceptarlo y explicarlo en la defensa, o controlar con código las exclusiones claras del manual (GNC en robo e incendio), como la vigencia |
+| Cuando no hay precedentes del mismo producto, se muestran los de otros productos | ⏳ A decidir | No se probó que haya causado el error del Cruze, pero puede confundir: un robo cubierto de otro plan, sin GNC. Opción: en ese caso, no mostrar precedentes |
 | La consola de Streamlit muestra decenas de errores *"No module named 'torchvision'"* | ⏳ Diagnosticado, sin acción por ahora | No rompe nada: el vigilante de archivos de Streamlit inspecciona todos los módulos cargados, y ~100 módulos de imágenes de `transformers` (que no usamos) fallan al cargarse sin `torchvision`. Streamlit atrapa cada error y sigue. Reproducido fuera de Streamlit: 102 módulos fallan. Probablemente es lo que vio Nicolás y por lo que instaló `torchvision` (no una diferencia de Linux): preguntarle. Arreglo propuesto: `fileWatcherType = "none"` en `.streamlit/config.toml`; si se confirma, sacar `torchvision` también de Linux |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
@@ -44,7 +47,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Costo estimado de cada consulta, visible en el chat | ✅ | `4906c02` |
 | Recorrido sugerido en la web: botones con las consultas recomendadas | ✅ | `2d828c8` |
 | Más autos de prueba en la base | ✅ 6 autos nuevos, cada uno prueba una sola cosa | `a7f8f3f` |
-| Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ⏳ | Con el modelo chico ya pasaron 4 de 5; falló la póliza vencida (ver Problemas) |
+| Correr con el modelo grande los 5 casos de autos nuevos que se cortaron por el cupo | ✅ Batería final: 23 de 25, todo con el modelo principal | (este commit) |
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
 | Elegir el modelo desde la web (el otro queda de respaldo) | ✅ | `7e986c3` |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | 🔶 Casi | `llm.py` ya crea los modelos con `make_llm` y los nombres están en `config.py`. Falta poder elegir otro proveedor (OpenAI, Ollama) |
