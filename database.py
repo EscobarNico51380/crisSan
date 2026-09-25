@@ -86,6 +86,7 @@ def inicializar_base() -> None:
             estado_reclamo TEXT DEFAULT 'Iniciado',
             dictamen_ia TEXT,
             fundamento_ia TEXT,
+            descripcion_foto TEXT,
             FOREIGN KEY (numero_poliza) REFERENCES polizas (numero_poliza)
         )
         """
@@ -95,6 +96,9 @@ def inicializar_base() -> None:
     columnas = {c["name"] for c in cur.execute("PRAGMA table_info(siniestros)")}
     if "fundamento_ia" not in columnas:
         cur.execute("ALTER TABLE siniestros ADD COLUMN fundamento_ia TEXT")
+    # Ídem para la descripción de la foto (desde el 25/09/2026).
+    if "descripcion_foto" not in columnas:
+        cur.execute("ALTER TABLE siniestros ADD COLUMN descripcion_foto TEXT")
 
     # --- Datos sintéticos ---
     cur.execute(
@@ -235,6 +239,7 @@ def registrar_siniestro(
     descripcion: str,
     dictamen: str,
     fundamento: str = "",
+    descripcion_foto: str = "",
 ) -> str:
     """Inserta una denuncia de siniestro y devuelve el número de reclamo.
 
@@ -263,8 +268,8 @@ def registrar_siniestro(
         INSERT INTO siniestros
             (numero_poliza, fecha_ocurrencia, fecha_denuncia, tipo_siniestro,
              hubo_lesionados, descripcion_usuario, estado_reclamo, dictamen_ia,
-             fundamento_ia)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             fundamento_ia, descripcion_foto)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             numero_poliza,
@@ -276,6 +281,7 @@ def registrar_siniestro(
             estado,
             dictamen,
             fundamento,
+            descripcion_foto or None,
         ),
     )
     conn.commit()
@@ -433,6 +439,7 @@ def obtener_reclamo(numero_reclamo: str) -> dict | None:
         SELECT s.id_siniestro, s.numero_poliza, s.tipo_siniestro,
                s.fecha_ocurrencia, s.fecha_denuncia, s.hubo_lesionados,
                s.descripcion_usuario, s.dictamen_ia, s.fundamento_ia,
+               s.descripcion_foto,
                s.estado_reclamo, p.patente, p.producto,
                v.marca, v.modelo, c.nombre_completo
         FROM siniestros s
@@ -466,6 +473,13 @@ def formatear_reclamo(datos: dict, markdown: bool = False) -> str:
             f"{_fecha_legible(datos['fecha_ocurrencia'])}, {lesionados}",
         ),
         ("Relato del cliente", f'"{datos["descripcion_usuario"]}"'),
+        *(
+            [("Foto (descripción automática)", " · ".join(
+                l.strip() for l in datos["descripcion_foto"].splitlines() if l.strip()
+            ))]
+            if datos.get("descripcion_foto")
+            else []
+        ),
         ("Denunciado", f"el {_fecha_legible(datos['fecha_denuncia'])}"),
         ("Dictamen", datos["dictamen_ia"]),
         ("Motivo", motivo),
@@ -527,24 +541,53 @@ def obtener_vigencia(patente: str) -> dict | None:
     return dict(fila) if fila else None
 
 
-def buscar_reclamo_existente(patente: str, fecha_ocurrencia: str) -> int | None:
-    """Número del reclamo ya registrado para ese auto y esa fecha, si existe.
+# Familias de tipos de siniestro, para comparar reclamos. El tipo lo escribe el
+# LLM con palabras variables ("Robo Total", "robo", "Hurto del vehículo"), así
+# que se agrupa por palabras clave. El orden importa: un "granizo que rompió
+# la luneta" es granizo, no cristales.
+FAMILIAS_DE_SINIESTRO = (
+    ("robo", ("robo", "hurto")),
+    ("incendio", ("incendio", "fuego", "quema")),
+    ("granizo", ("granizo",)),
+    ("cristales", ("cristal", "vidrio", "parabrisas", "luneta")),
+    ("choque", ("choque", "colisi", "accidente", "impacto", "vuelco", "abolladura")),
+)
 
-    Sirve para no registrar dos veces el mismo hecho: si el cliente menciona un
-    siniestro que ya denunció (por ejemplo, para saber cómo va), se le muestra
-    ese reclamo en lugar de abrir otro.
+
+def familia_de_siniestro(tipo: str) -> str:
+    """"Robo Total" -> "robo". Si no encaja en ninguna familia, el tipo tal cual."""
+    tipo = (tipo or "").lower()
+    for familia, claves in FAMILIAS_DE_SINIESTRO:
+        if any(clave in tipo for clave in claves):
+            return familia
+    return tipo.strip()
+
+
+def buscar_reclamo_existente(
+    patente: str, fecha_ocurrencia: str, tipo_siniestro: str
+) -> int | None:
+    """Número del reclamo ya registrado para el mismo hecho, si existe.
+
+    Es el mismo hecho si coinciden el auto, la fecha y la familia del tipo de
+    siniestro. Sirve para no registrar dos veces lo mismo: si el cliente
+    menciona un siniestro que ya denunció (por ejemplo, para saber cómo va),
+    se le muestra ese reclamo en lugar de abrir otro. Un robo y un granizo del
+    mismo auto el mismo día son hechos distintos.
     """
     conn = get_conn()
-    fila = conn.execute(
+    filas = conn.execute(
         """
-        SELECT s.id_siniestro
+        SELECT s.id_siniestro, s.tipo_siniestro
         FROM siniestros s
         JOIN polizas p ON s.numero_poliza = p.numero_poliza
         WHERE p.patente = ? AND s.fecha_ocurrencia = ?
         ORDER BY s.id_siniestro DESC
-        LIMIT 1
         """,
         (patente.strip().upper(), fecha_ocurrencia),
-    ).fetchone()
+    ).fetchall()
     conn.close()
-    return fila["id_siniestro"] if fila else None
+    buscada = familia_de_siniestro(tipo_siniestro)
+    for fila in filas:
+        if familia_de_siniestro(fila["tipo_siniestro"]) == buscada:
+            return fila["id_siniestro"]
+    return None

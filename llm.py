@@ -17,14 +17,23 @@ intento vuelve a detectar el bloqueo; un rechazo por cupo no consume tokens.
 
 from __future__ import annotations
 
+import base64
+import io
 import re
 import threading
 import time
 from typing import Any, Callable
 
+from langchain_core.messages import HumanMessage
 from langchain_groq import ChatGroq
 
-from config import LLM_MODEL, LLM_MODELO_RESPALDO
+from config import (
+    FOTO_LADO_MAXIMO,
+    LLM_MODEL,
+    LLM_MODELO_RESPALDO,
+    LLM_MODELO_VISION,
+    VISION_MAX_TOKENS,
+)
 
 # En orden de preferencia: se usa el primero que tenga cupo.
 MODELOS = (LLM_MODEL, LLM_MODELO_RESPALDO)
@@ -158,3 +167,56 @@ def invocar(construir: Callable[[ChatGroq], Any], entrada: Any) -> Any:
                 f"no se lo usa por {max(1, round(espera / 60))} min"
             )
     raise CupoAgotado(min(segundos_bloqueado(m) for m in MODELOS))
+
+
+# ---------------------------------------------------------------------------
+# Modelo de visión
+# ---------------------------------------------------------------------------
+# Sin razonamiento: el modelo solo describe, y el razonamiento se cuenta como
+# salida (que en el plan gratuito tiene un límite por minuto).
+_vision = ChatGroq(
+    model=LLM_MODELO_VISION,
+    temperature=0,
+    max_tokens=VISION_MAX_TOKENS,
+    reasoning_effort="none",
+)
+
+
+def preparar_foto(datos: bytes) -> str:
+    """Achica la foto y la devuelve en base64 (JPEG), lista para el modelo."""
+    from PIL import Image  # lazy: solo hace falta si hay fotos
+
+    imagen = Image.open(io.BytesIO(datos)).convert("RGB")
+    imagen.thumbnail((FOTO_LADO_MAXIMO, FOTO_LADO_MAXIMO))
+    buffer = io.BytesIO()
+    imagen.save(buffer, "JPEG", quality=85)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def describir_foto(foto_b64: str, instrucciones: str) -> str:
+    """Pide al modelo de visión que describa la foto.
+
+    Respeta el disyuntor: si el modelo agotó su cupo diario, lanza
+    ``CupoAgotado`` sin intentarlo. No hay respaldo: es el único modelo de Groq
+    que acepta imágenes.
+    """
+    espera = segundos_bloqueado(LLM_MODELO_VISION)
+    if espera > 0:
+        raise CupoAgotado(espera)
+    mensaje = HumanMessage(
+        content=[
+            {"type": "text", "text": instrucciones},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{foto_b64}"}},
+        ]
+    )
+    try:
+        respuesta = invocar_con_reintentos(_vision.invoke, [mensaje])
+    except Exception as e:  # noqa: BLE001
+        if es_limite_diario(str(e)):
+            espera = segundos_de_espera(str(e)) or 60.0
+            with _candado:
+                _bloqueado_hasta[LLM_MODELO_VISION] = time.time() + espera
+            raise CupoAgotado(espera) from e
+        raise
+    contenido = respuesta.content
+    return contenido if isinstance(contenido, str) else str(contenido)

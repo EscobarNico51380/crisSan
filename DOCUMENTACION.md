@@ -228,6 +228,10 @@ se mantiene acotado con una ventana + resumen (§16).
 | 28 | Una póliza vencida salía cubierta | El prompt del dictamen no pedía comparar la fecha del siniestro con la vigencia, y el modelo no lo hacía aunque tenía las dos fechas a la vista | La vigencia y el pago los controla el código después del dictamen; si no están en regla, el dictamen pasa a Rechazado con un fundamento del sistema (§21) |
 | 29 | Al consultar un reclamo, respondía solo "El reclamo #43 está en estado Iniciado" | La herramienta devolvía pocos datos, el motivo del dictamen no se guardaba, y el LLM resumía la ficha: con el modelo de respaldo, incluso después de pedirle en el prompt todos los datos, respondió solo "Iniciado." | Se guarda el motivo (columna `fundamento_ia`, con migración automática para las bases existentes) y **la respuesta es la ficha armada por el código**, sin pasar por el LLM: siempre completa, y el turno pasa de ~4.000 a ~900 tokens (solo la clasificación). Además, el ruteo mira también la pregunta reescrita ("¿y por qué me lo aprobaron?" → "¿Por qué me aprobaron el reclamo #47?"), y al consultar un reclamo el agente recuerda la patente de ese auto |
 | 30 | El plazo de denuncia se evaluaba distinto según la redacción: "me robaron el auto el 10 de mayo" se cubría y "…y recién ahora hago la denuncia" se rechazaba | Lo decidía el modelo leyendo el relato, y una fecha pasada no alcanza para saber si la denuncia se hace ahora o si el cliente habla de un reclamo que ya hizo. Además, el mismo hecho denunciado dos veces generaba dos reclamos | Lo decide el código mirando la base: si ya hay un reclamo de ese auto con esa fecha, se muestra ese reclamo y no se registra otro; si no, la denuncia es de hoy y, si pasaron más de 72 horas desde el hecho, se rechaza con un motivo escrito por el sistema (§24) |
+| 31 | El modelo de visión rechazaba todos los pedidos | En el plan gratuito limita la salida a 1.000 tokens por minuto y rechaza de entrada los pedidos que *podrían* pasarse; sin un máximo, Groq estimaba 1.226 | `max_tokens=400` y razonamiento apagado (el razonamiento cuenta como salida). Una descripción usa ~110 tokens (§26) |
+| 32 | El modelo de visión confundía granizo con nieve e inventaba un vuelco | Sus respuestas son muy sensibles a la redacción de las instrucciones | Se probaron tres redacciones con las mismas fotos y se eligió la única que no inventó nada (§26) |
+| 33 | Una foto de un choque con un relato de granizo salía cubierta | La comparación foto-relato era una regla del prompt del dictamen, y después un campo más de su formulario: en medio del prompt largo quedaba diluida y el modelo chico la salteaba | Llamada aparte, corta y enfocada, que solo compara foto y relato; si no coinciden, el código pone *Requiere peritaje*. Aislada, los dos modelos la resuelven bien (§26) |
+| 34 | Dos hechos distintos del mismo auto el mismo día se tomaban como duplicados (en el recorrido: el granizo del paso 11 se confundía con el robo del paso 7) | El control de duplicados comparaba solo auto y fecha | Compara también la familia del tipo de siniestro (robo, incendio, granizo, cristales, choque) (§26) |
 
 ---
 
@@ -270,6 +274,7 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - ✅ Costo estimado de cada turno y de la conversación, visible en el chat.
 - ✅ Modelo de respaldo automático cuando el principal agota su cupo diario.
 - ✅ Selector de modelo en la web.
+- ✅ Fotos del cliente: un modelo de visión las describe y el dictamen las usa como evidencia.
 - ✅ Recorrido sugerido en la web: 10 consultas en orden, cada una con un botón, que muestran las funciones del sistema.
 
 ## 13. Limitaciones y mejoras futuras
@@ -985,7 +990,9 @@ paso. Las líneas punteadas son decisiones del ruteo; las continuas, pasos fijos
 
 ```mermaid
 graph TD
-    inicio([Mensaje del cliente]) --> clasificar
+    inicio([Mensaje del cliente, con o sin foto]) --> analizar_foto
+    analizar_foto["analizar_foto<br/>Modelo de visión: describe la foto"]:::llm
+    analizar_foto --> clasificar
     clasificar["clasificar<br/>LLM: intención y pregunta reescrita<br/>Código: patente, DNI y reclamo"]:::mixto
     clasificar -. charla .-> responder
     clasificar -. pregunta general .-> consultar_clausulas
@@ -995,7 +1002,7 @@ graph TD
     clasificar -. consulta o denuncia .-> consultar_poliza
     consultar_poliza["consultar_poliza<br/>Código: SQL"]:::codigo
     consultar_clausulas["consultar_clausulas<br/>RAG: busca en el manual<br/>y las exclusiones si el auto tiene GNC"]:::rag
-    emitir_dictamen["emitir_dictamen<br/>LLM: ¿lo cubre el manual?<br/>Código: vigencia, pago, plazo, duplicado"]:::mixto
+    emitir_dictamen["emitir_dictamen<br/>LLM: ¿lo cubre el manual? ¿la foto coincide?<br/>Código: vigencia, pago, plazo, duplicado, patente de la foto"]:::mixto
     registrar["registrar<br/>Código: guarda el reclamo"]:::codigo
     responder["responder<br/>LLM: redacta la respuesta"]:::llm
     consultar_reclamo["consultar_reclamo<br/>Código: ficha del reclamo"]:::codigo
@@ -1055,3 +1062,112 @@ Con *"Me robaron el auto AJ222NP el 10 de mayo"*:
 
 **En resumen:** el código decide lo que se puede calcular, el RAG le da al modelo
 el texto que necesita, y el modelo interpreta lo que no se puede calcular.
+
+
+---
+
+## 26. Fotos del cliente
+
+### Qué hace
+
+En el chat web se puede adjuntar **una foto por mensaje** (clip del chat), con
+texto o sin él. La foto se achica a 1.024 píxeles de lado antes de mandarla, y
+**no se guarda**: con el reclamo queda solo su descripción, que aparece en la
+ficha. En la consola no hay fotos.
+
+### Quién decide qué
+
+| Paso | Quién |
+|---|---|
+| Describir la foto: parte del auto, tipo de daño, magnitud y patente si se lee | **Modelo de visión** (`qwen/qwen3.8-27b`, el único de Groq que acepta imágenes). Solo describe: no opina sobre la cobertura |
+| ¿La foto y el relato cuentan lo mismo? | **LLM principal**, en una llamada aparte y enfocada |
+| Si no coinciden → *Requiere peritaje*. Si la patente de la foto no es la del auto asegurado → *Requiere peritaje* | **Código** |
+| ¿Está cubierto? | **LLM principal**, en el dictamen de siempre, con la foto como evidencia |
+| Avisar si la foto no se pudo analizar | **Código**: antepone el aviso a la respuesta |
+
+El paso nuevo, `analizar_foto`, corre **antes de clasificar**, así un *"¿me
+cubre esto?"* con la foto de un daño se entiende aunque el texto no diga qué
+pasó.
+
+### Evaluación del modelo de visión
+
+Con tres fotos de ejemplo (`ejemplos/fotos/`, con licencia libre) y tres
+redacciones de las instrucciones:
+
+| Foto | Versión 1 (básica) | Versión 2 (elegida) | Versión 3 |
+|---|---|---|---|
+| Granizo: luneta estallada, techo abollado, hielo en el pasto | Luneta rota; **confundió el granizo con nieve** | ✅ **"Rotura de vidrio y granizo"**, "abolladuras circulares y restos de granizo" | Otra vez **nieve** |
+| Parabrisas con rotura en estrella, de cerca | ✅ Rotura en estrella por impacto puntual | Muy cauto: "no se distingue" en tipo y magnitud (el detalle sí describe la grieta) | ✅ Rotura de vidrio |
+| Choque frontal: frente destruido, motor expuesto | Grave, posible pérdida total, pero **inventó que el auto estaba volcado** | ✅ Sin vuelco; describe bien el frente | **Vuelco inventado** otra vez |
+
+- La versión 2 agregó: *"afirmá solo lo que se vea con claridad; si algo no se
+  distingue, decilo; no supongas cómo ocurrió; no confundas el auto con otros
+  objetos"*. La versión 3 sumó una sola oración (*"si se ve una parte de cerca,
+  describí igual su daño"*): mejoró el parabrisas y **empeoró las otras dos**.
+- **Conclusión:** las respuestas del modelo de visión son muy sensibles a la
+  redacción. Se eligió la versión 2 porque **fue la única que no inventó nada**:
+  entre un modelo que dice "no se distingue" y uno que inventa un vuelco, el
+  primero es mucho más seguro para decidir un siniestro.
+- Con la misma redacción, repite siempre la misma respuesta.
+- Latencia: entre 1 y 19 segundos por foto.
+
+### Límites y costo
+
+- El plan gratuito limita la **salida a 1.000 tokens por minuto** y rechaza de
+  entrada los pedidos que podrían pasarse: por eso `VISION_MAX_TOKENS = 400` y el
+  razonamiento apagado.
+- Una foto usa ~2.000 tokens de entrada y ~110 de salida: unos **US$ 0,002**
+  (US$ 0,80 por millón de entrada y US$ 4,00 de salida). La comparación con el
+  relato suma unos 500 tokens del modelo principal.
+- Si el modelo de visión no responde, el sistema dictamina con el relato y lo
+  avisa. No hay respaldo: es el único modelo de Groq con visión.
+
+### La comparación foto-relato: tres intentos
+
+Encontrar la contradicción entre la foto y el relato llevó tres diseños, y es un
+buen ejemplo de cómo trabajar con LLMs:
+
+1. **Una regla en el prompt del dictamen** (*"si la foto no coincide, pedí
+   peritaje"*): la foto de un choque con un relato de granizo salió *Cubierto*.
+2. **Un campo obligatorio en el formulario del dictamen**: también salió
+   *Cubierto*. El modelo tenía el prompt largo, las cláusulas, los precedentes,
+   seis reglas y siete campos: la comparación quedaba diluida.
+3. **Una llamada aparte, que solo compara foto y relato**: aislada, los dos
+   modelos la resuelven bien. Si responde "no coinciden", el código pone
+   *Requiere peritaje*.
+
+**Una tarea por llamada:** así como el código se queda con lo que se puede
+calcular, cada llamada al modelo conviene que haga una sola cosa.
+
+### Pruebas
+
+El modelo principal había agotado su cupo, así que **los dictámenes con foto se
+probaron con el modelo de respaldo** (`gpt-oss-20b`), que es el más exigente.
+
+| Foto | Mensaje | Resultado |
+|---|---|---|
+| Granizo | *Me cayó granizo sobre la AC456BD* (C+) | ✅ **Cubierto**; la ficha del reclamo guarda la descripción |
+| Choque frontal | *Me cayó granizo sobre la AB123CD* | ✅ **Requiere peritaje**: *"El relato menciona granizo, mientras que la foto muestra una destrucción frontal típica de un choque"* |
+| Parabrisas roto | *Me cayó granizo sobre la AC456BD* | ✅ **Cubierto**: el granizo puede romper vidrios, no es contradicción |
+| Choque frontal | *¿Me cubre esto? Es el AD789EF* (todo riesgo) | ✅ Tomado como denuncia; **Cubierto**. Razonó que las exclusiones por GNC no aplican a un choque |
+| Granizo, sin texto | — | ✅ Denuncia; **pidió la patente** |
+| Granizo, con el modelo de visión caído (simulado) | *Hola* | ✅ *"⚠️ No pude analizar la foto que mandaste, así que esta respuesta se basa solo en tu relato."* |
+
+En la web, con un agente simulado: los pasos 11 y 12 del recorrido mandan el
+texto con su foto de ejemplo.
+
+### Duplicados por tipo de hecho
+
+Al armar los pasos con foto del recorrido apareció un problema en el control de
+duplicados: el granizo del Gol Trend (paso 11) se tomaba como "ya denunciado"
+porque en el paso 7 ese auto había denunciado un robo el mismo día. Ahora el
+control compara también la **familia del tipo de siniestro** (robo, incendio,
+granizo, cristales, choque), con una tabla de palabras clave: el LLM escribe el
+tipo con palabras variables ("Robo Total", "Hurto del vehículo").
+
+### Pendiente
+
+- Probar los dictámenes con foto con el **modelo principal**.
+- Probar con **fotos propias** del grupo.
+- La comparación de la **patente de la foto** no se probó con una foto real:
+  ninguna de las de ejemplo muestra la patente.

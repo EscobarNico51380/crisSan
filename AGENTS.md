@@ -19,7 +19,7 @@ emite un dictamen de cobertura con el LLM, lo registra y responde.
 | Archivo | Qué hace |
 |---|---|
 | `agent.py` | El grafo: nodos, ruteo, prompts (`PROMPT_*`) y controles deterministas (vigencia, pago, patente, DNI) |
-| `llm.py` | Único lugar donde se crean los modelos. Modelo principal, respaldo y disyuntor. **Toda llamada al LLM pasa por `llm.invocar`** |
+| `llm.py` | Único lugar donde se crean los modelos. Modelo principal, respaldo y disyuntor. **Toda llamada al LLM pasa por `llm.invocar`**. También el modelo de visión (`describir_foto`, `preparar_foto`) |
 | `rag.py` | Carga del PDF, chunking estructural, embeddings e5, Chroma y búsqueda híbrida (BM25 + semántica) |
 | `database.py` | Esquema SQLite, datos de prueba y consultas (siempre parametrizadas) |
 | `tools.py` | Las herramientas `@tool` que usa el grafo |
@@ -28,6 +28,7 @@ emite un dictamen de cobertura con el LLM, lo registra y responde.
 | `app.py` / `main.py` | Chat web (Streamlit) y chat por consola |
 | `iniciar.py` | Instalación y arranque con un solo comando (solo biblioteca estándar) |
 | `test_casos.py` | 52 casos que pasan por el agente completo (consume cupo) |
+| `ejemplos/fotos/` | Fotos de ejemplo (granizo, parabrisas, choque) con sus créditos |
 | `notebooks_clases/` | Notebooks de la cátedra pasados a `.py`, como referencia |
 
 ---
@@ -124,6 +125,13 @@ precedentes y sesgan los dictámenes siguientes.
   ruido, no rompen nada. Los genera el vigilante de archivos de Streamlit al
   inspeccionar módulos de imágenes de `transformers` que no se usan. Ver
   `PENDIENTES.md`.
+- **Las instrucciones del modelo de visión (`PROMPT_FOTO`) son muy sensibles:**
+  una oración más hizo que volviera a confundir granizo con nieve. Si se
+  cambian, repetir la prueba con las tres fotos de ejemplo (ver `DOCUMENTACION.md`).
+- **El modelo de visión limita la salida a 1.000 tokens por minuto** en el plan
+  gratuito: no subir `VISION_MAX_TOKENS` ni prender su razonamiento.
+- **Una tarea por llamada al LLM:** la comparación foto-relato falló como
+  regla y como campo del dictamen, y funcionó como llamada aparte.
 - **Consola de Windows:** usar `PYTHONIOENCODING=utf-8` si fallan los acentos.
 
 ---

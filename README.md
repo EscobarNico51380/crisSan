@@ -17,10 +17,11 @@ autos (San Cristóbal). El cliente escribe en lenguaje natural y el sistema:
 - consulta los datos de la póliza del cliente en una base de datos;
 - analiza un siniestro y **dictamina si está cubierto**, citando las cláusulas
   que lo fundamentan, y registra el reclamo;
+- mira la **foto** del daño, si el cliente la adjunta, y la usa como evidencia;
 - recuerda la conversación, así que entiende preguntas de seguimiento.
 
 Está construido con **LangChain** y **LangGraph**, y usa el modelo
-`gpt-oss-120b` a través de **Groq**.
+`gpt-oss-120b` a través de **Groq** (y `qwen3.8-27b` para mirar las fotos).
 
 ---
 
@@ -111,9 +112,30 @@ muestra. También se puede escribir cualquier consulta en el chat.
 | 8 | Me robaron el auto AF987XX | El mismo robo y el mismo plan, pero con GNC: rechazado por una exclusión del manual |
 | 9 | Me robaron el auto AJ222NP | Póliza vencida: la rechaza un control del sistema, sin el modelo de lenguaje |
 | 10 | Mi DNI es 30555777 | Busca por DNI y lista las pólizas de la titular |
+| 11 | Me cayó granizo sobre la AC456BD 📷 | Con foto de granizo: el modelo de visión describe el daño y coincide con el relato |
+| 12 | Me cayó granizo sobre la AB123CD 📷 | Con la foto de un choque frontal: no coincide con el relato, así que pide peritaje |
 
-El recorrido completo usa unos 60.000 tokens, menos de un tercio del cupo
-diario.
+Los pasos con 📷 envían, además, una foto de ejemplo. El recorrido completo usa
+unos 80.000 tokens, menos de la mitad del cupo diario.
+
+---
+
+## Fotos
+
+Se puede **adjuntar una foto del daño** con el clip del chat (una por mensaje;
+JPG, PNG o WEBP). Sirve con texto (*"Me cayó granizo sobre la AC456BD"*) o sin
+él (*"¿Me cubre esto?"*, o solo la foto).
+
+- Un modelo de visión (`qwen3.8-27b`) **describe** la foto: qué parte del auto,
+  qué tipo de daño y qué tan grave. **No decide la cobertura.**
+- El dictamen lo sigue emitiendo el modelo principal, que usa esa descripción
+  como evidencia. Si la foto no coincide con el relato, pide **peritaje**.
+- La foto **no se guarda**: con el reclamo queda solo su descripción.
+- Si la foto no se puede analizar, el chat lo avisa y responde con el relato.
+
+En `ejemplos/fotos/` hay tres fotos para probar (granizo, parabrisas roto y
+choque frontal), con sus créditos. La descripción es automática y puede tener
+errores: ver `DOCUMENTACION.md`.
 
 ---
 

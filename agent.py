@@ -37,7 +37,7 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 import database
-from llm import CupoAgotado, segundos_de_espera
+from llm import CupoAgotado, describir_foto, segundos_de_espera
 from llm import invocar as invocar_llm
 from config import (
     HISTORIAL_CLASIFICADOR,
@@ -202,6 +202,10 @@ class EstadoAgente(TypedDict):
     siniestro_registrado: str  # resultado del registro del siniestro
     reclamo_resultado: str  # ficha del reclamo consultado
     reclamo_ya_denunciado: str  # reclamo existente del mismo hecho, si lo hay
+    foto: str  # foto adjunta al mensaje, en base64 (solo durante el turno)
+    descripcion_foto: str  # lo que describió el modelo de visión
+    patente_foto: str  # patente que se lee en la foto, si se ve
+    aviso_foto: str  # aviso si la foto no se pudo analizar
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +256,33 @@ class DictamenSiniestro(BaseModel):
     hubo_lesionados: int = Field(description="1 si hubo lesionados, 0 si no")
 
 
+class ComparacionFoto(BaseModel):
+    """¿La foto del cliente muestra lo mismo que cuenta su relato?
+
+    Es una llamada aparte, corta y enfocada. Como un campo más del dictamen, el
+    modelo chico la salteaba: en medio del prompt largo (póliza, cláusulas,
+    precedentes, reglas) la comparación quedaba diluida. Aislada, los dos
+    modelos la resuelven bien.
+    """
+
+    coincide: Literal["si", "no", "no aplica"] = Field(
+        description=(
+            "'no' si la foto muestra claramente otro tipo de daño u otra parte del "
+            "auto que la que cuenta el relato (por ejemplo: relato de granizo y "
+            "foto de un choque frontal). 'si' si es compatible (el granizo puede "
+            "romper vidrios, por ejemplo). 'no aplica' si la foto no deja ver el "
+            "daño o si el relato no dice qué pasó."
+        )
+    )
+    diferencia: str = Field(
+        default="",
+        description=(
+            "Si no coincide: qué cuenta el relato y qué muestra la foto, en una "
+            "oración. Vacío en otro caso."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Prompts del sistema
 # ---------------------------------------------------------------------------
@@ -269,6 +300,8 @@ PROMPT_CLASIFICAR = (
     "'siniestro' es sólo un hecho que OCURRIÓ. Una hipótesis ('¿y si hubiera "
     "sido granizo?', '¿me cubriría si...?') es 'consulta' si hay una póliza en "
     "juego, o 'general' si no.\n"
+    "Si el cliente adjuntó la FOTO de un daño y pregunta si está cubierto o "
+    "cuenta qué pasó, es 'siniestro': el hecho ocurrió.\n"
     "Además devolvé el mensaje reescrito para que se entienda sin el historial.\n"
     "Respondé SOLO con la estructura pedida, sin texto adicional."
 )
@@ -309,6 +342,31 @@ PROMPT_CHARLA = (
     "No inventes datos de pólizas, montos, teléfonos ni procedimientos."
 )
 
+# Instrucciones para el modelo de visión. Se probaron tres redacciones con
+# las fotos de ejemplo: esta fue la única que no inventó nada (con otras,
+# confundía granizo con nieve o describía un vuelco que no existía). Es muy
+# sensible a la redacción: ver DOCUMENTACION.md antes de cambiarla.
+PROMPT_FOTO = (
+    "Sos un perito que mira la foto que mandó un cliente de una aseguradora de "
+    "autos. Describí SOLO lo que se ve, sin opinar sobre la cobertura.\n"
+    "Reglas: afirmá solo lo que se vea con claridad; si algo no se distingue, "
+    "escribí 'no se distingue'. No supongas cómo ocurrió el hecho. Si en la foto "
+    "hay otros autos u objetos sueltos, no los confundas con el auto dañado.\n"
+    "Respondé exactamente con este formato:\n"
+    "PATENTE: <la patente si se lee con claridad, o NO SE VE>\n"
+    "VEHICULO: <tipo y color, o NO SE VE UN VEHICULO>\n"
+    "PARTE DAÑADA: <qué parte del auto>\n"
+    "TIPO DE DAÑO: <abolladura, rotura de vidrio, granizo, choque, quemadura, faltante u otro>\n"
+    "MAGNITUD: <leve, moderado o grave; parcial o posible pérdida total>\n"
+    "DETALLE: <una o dos oraciones con lo que se observa, incluido el contexto si ayuda>"
+)
+
+PROMPT_COMPARAR_FOTO = (
+    "Sos perito de seguros. Compará la foto del cliente con su relato: ¿muestran "
+    "el mismo tipo de daño? Tené en cuenta que un mismo hecho puede dejar varios "
+    "daños (el granizo abolla y también rompe vidrios)."
+)
+
 PROMPT_DICTAMEN = (
     "Sos el PERITO de seguros San Cristóbal. Determiná si el siniestro está "
     "CUBIERTO o NO.\n\n"
@@ -327,7 +385,10 @@ PROMPT_DICTAMEN = (
     "4. Extraé tipo de siniestro, fecha (hoy si no se aclara) y si hubo lesionados.\n"
     "5. Si hay EXCLUSIONES POR CARACTERÍSTICAS DEL VEHÍCULO: cada una indica entre "
     "corchetes a qué cobertura aplica. Aplicala SOLO a esa cobertura y respetá "
-    "las salvedades de su encabezado.\n\n"
+    "las salvedades de su encabezado.\n"
+    "6. Si hay FOTO DEL CLIENTE: usala como evidencia del daño; si no deja ver "
+    "bien el daño, basate en el relato. La descripción es automática y puede "
+    "tener errores: no rechaces solo por ella.\n\n"
     "Básate en: la póliza, las cláusulas recuperadas, las exclusiones y las "
     "resoluciones previas (referencia, no regla rígida)."
 )
@@ -375,7 +436,9 @@ def _transcripcion(mensajes: list[AnyMessage], tope: int) -> str:
     return "\n".join(lineas)
 
 
-def _entrada_clasificador(mensajes: list[AnyMessage], resumen: str = "") -> str:
+def _entrada_clasificador(
+    mensajes: list[AnyMessage], resumen: str = "", descripcion_foto: str = ""
+) -> str:
     """Arma lo que ve el clasificador: el mensaje actual y, si hay, los previos.
 
     Con el historial el clasificador entiende las preguntas de seguimiento y
@@ -385,6 +448,11 @@ def _entrada_clasificador(mensajes: list[AnyMessage], resumen: str = "") -> str:
     """
     actual = mensajes[-1].content
     previos = mensajes[:-1][-HISTORIAL_CLASIFICADOR:]
+    if descripcion_foto:
+        actual += (
+            "\n[El cliente adjuntó una foto. Descripción automática:\n"
+            f"{descripcion_foto}]"
+        )
     if not previos and not resumen:
         return actual
     partes = []
@@ -417,7 +485,9 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
                 SystemMessage(content=PROMPT_CLASIFICAR),
                 HumanMessage(
                     content=_entrada_clasificador(
-                        state["messages"], state.get("resumen", "")
+                        state["messages"],
+                        state.get("resumen", ""),
+                        state.get("descripcion_foto", ""),
                     )
                 ),
             ],
@@ -470,12 +540,57 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
     }
 
 
+def _patente_de_la_foto(descripcion: str) -> str:
+    """Lee la línea "PATENTE:" de la descripción; "" si no se ve."""
+    for linea in descripcion.splitlines():
+        if linea.strip().upper().startswith("PATENTE:"):
+            return extraer_patente(linea.split(":", 1)[1]) or ""
+    return ""
+
+
+def nodo_analizar_foto(state: EstadoAgente) -> dict:
+    """Si el mensaje trae una foto, el modelo de visión la describe.
+
+    Corre antes de clasificar, así un "¿me cubre esto?" con una foto se
+    entiende aunque el texto no diga qué pasó. La foto no se guarda: se borra
+    del estado al terminar este paso, y con el reclamo queda solo la
+    descripción. Sin foto no hace nada (ni llama al modelo).
+    """
+    vacio = {"foto": "", "descripcion_foto": "", "patente_foto": "", "aviso_foto": ""}
+    foto = state.get("foto") or ""
+    if not foto:
+        return vacio
+    try:
+        descripcion = describir_foto(foto, PROMPT_FOTO).strip()
+    except Exception as e:  # noqa: BLE001
+        print(f"[foto] no se pudo analizar: {type(e).__name__}: {e}")
+        return {
+            **vacio,
+            "aviso_foto": (
+                "No pude analizar la foto que mandaste, así que esta respuesta se "
+                "basa solo en tu relato."
+            ),
+        }
+    return {
+        **vacio,
+        "descripcion_foto": descripcion,
+        "patente_foto": _patente_de_la_foto(descripcion),
+    }
+
+
+def _con_aviso_de_foto(state: EstadoAgente, texto: str) -> str:
+    """Antepone el aviso de foto no analizada. Lo agrega el código: el modelo
+    chico ignoraba la instrucción de avisarlo."""
+    aviso = state.get("aviso_foto")
+    return f"⚠️ {aviso}\n\n{texto}" if aviso else texto
+
+
 def nodo_pedir_patente(state: EstadoAgente) -> dict:
     texto = (
         "Para poder ayudarte necesito la patente del vehículo asegurado "
         "(por ejemplo, AB123CD). ¿Me la pasás?"
     )
-    return {"messages": [AIMessage(content=texto)]}
+    return {"messages": [AIMessage(content=_con_aviso_de_foto(state, texto))]}
 
 
 def nodo_listar_polizas(state: EstadoAgente) -> dict:
@@ -618,6 +733,12 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     consulta = state.get("consulta", "")
     if consulta and consulta.strip() != mensaje.strip():
         relato += f"\n(Reformulado con el contexto de la conversación: {consulta})"
+    seccion_foto = ""
+    if state.get("descripcion_foto"):
+        seccion_foto = (
+            "--- FOTO DEL CLIENTE (descripción automática; puede tener errores) ---\n"
+            f"{state['descripcion_foto']}\n\n"
+        )
     seccion_exclusiones = ""
     if state.get("exclusiones"):
         seccion_exclusiones = (
@@ -629,6 +750,7 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
         f"--- DATOS DE LA PÓLIZA ---\n{state['datos_poliza']}\n\n"
         f"--- CLÁUSULAS DEL MANUAL ---\n{state['clausulas']}\n\n"
         f"{seccion_exclusiones}"
+        f"{seccion_foto}"
         f"--- RESOLUCIONES PREVIAS (precedentes) ---\n{precedentes}\n\n"
         f"--- RELATO DEL USUARIO ---\n{relato}"
     )
@@ -648,9 +770,10 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     # ¿Ese hecho ya estaba denunciado? "Me robaron el auto el 10 de mayo" no
     # implica que la denuncia se haga ahora: el cliente puede estar hablando de
     # un reclamo que ya hizo. Lo decide la base, no la redacción: si hay un
-    # reclamo de ese auto con esa fecha, se le muestra y no se registra otro.
+    # reclamo de ese auto, con esa fecha y del mismo tipo de hecho, se le
+    # muestra y no se registra otro.
     existente = database.buscar_reclamo_existente(
-        state.get("patente", ""), fecha_siniestro.isoformat()
+        state.get("patente", ""), fecha_siniestro.isoformat(), resultado.tipo_siniestro
     )
     if existente:
         return {
@@ -659,6 +782,27 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
             "reclamo_ya_denunciado": str(existente),
         }
 
+    # Comparación foto-relato: una llamada aparte, corta y enfocada.
+    comparacion = None
+    if state.get("descripcion_foto"):
+        try:
+            comparacion = invocar_llm(
+                lambda m: m.with_structured_output(ComparacionFoto, method="json_schema"),
+                [
+                    SystemMessage(content=PROMPT_COMPARAR_FOTO),
+                    HumanMessage(
+                        content=(
+                            "--- FOTO DEL CLIENTE (descripción automática) ---\n"
+                            f"{state['descripcion_foto']}\n\n"
+                            f"--- RELATO DEL CLIENTE ---\n{relato}"
+                        )
+                    ),
+                ],
+            )
+        except Exception as e:  # noqa: BLE001
+            # Si falla, el dictamen sigue sin esta verificación.
+            print(f"[foto] no se pudo comparar con el relato: {type(e).__name__}")
+
     determinacion = resultado.determinacion
     fundamento = resultado.fundamento
     motivo = motivo_de_rechazo_administrativo(
@@ -666,6 +810,24 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     )
     if motivo:
         determinacion, fundamento = "Rechazado", motivo
+    elif comparacion and comparacion.coincide == "no":
+        # El modelo juzga si la foto y el relato cuentan lo mismo (es
+        # interpretación); la consecuencia la decide el código.
+        determinacion = "Requiere peritaje"
+        fundamento = (
+            "La foto no coincide con el relato: "
+            + (comparacion.diferencia or "muestra otro tipo de daño.")
+            + " Hace falta un peritaje para determinar qué pasó."
+        )
+    elif state.get("patente_foto") and state["patente_foto"] != state.get("patente"):
+        # La patente que se lee en la foto no es la del auto asegurado: lo
+        # compara el código. No prueba fraude, pero hay que verificarlo.
+        determinacion = "Requiere peritaje"
+        fundamento = (
+            f"La patente que se ve en la foto ({state['patente_foto']}) no coincide "
+            f"con la del vehículo asegurado ({state.get('patente')}). Hace falta "
+            "verificar que la foto corresponda a este auto."
+        )
 
     return {
         "dictamen": {
@@ -690,6 +852,7 @@ def nodo_registrar(state: EstadoAgente) -> dict:
             "descripcion": descripcion,
             "dictamen": dictamen["determinacion"],
             "fundamento": dictamen["fundamento"],
+            "descripcion_foto": state.get("descripcion_foto", ""),
         }
     )
     # Guardamos el número de reclamo para poder consultarlo en turnos siguientes.
@@ -707,6 +870,10 @@ def nodo_responder(state: EstadoAgente) -> dict:
     if state.get("exclusiones"):
         contexto.append(
             f"[Exclusiones por características del vehículo]\n{state['exclusiones']}"
+        )
+    if state.get("descripcion_foto"):
+        contexto.append(
+            f"[Foto del cliente, descripción automática]\n{state['descripcion_foto']}"
         )
     if state.get("dictamen"):
         d = state["dictamen"]
@@ -754,7 +921,7 @@ def nodo_responder(state: EstadoAgente) -> dict:
             "Disculpá, no pude armar una respuesta en este momento. "
             "¿Podrías reformular tu consulta?"
         )
-    return {"messages": [AIMessage(content=texto)]}
+    return {"messages": [AIMessage(content=_con_aviso_de_foto(state, texto))]}
 
 
 def nodo_compactar(state: EstadoAgente) -> dict:
@@ -852,6 +1019,7 @@ def rutear_desde_clausulas(state: EstadoAgente) -> str:
 def construir_agente():
     grafo = StateGraph(EstadoAgente)
 
+    grafo.add_node("analizar_foto", nodo_analizar_foto)
     grafo.add_node("clasificar", nodo_clasificar)
     grafo.add_node("pedir_patente", nodo_pedir_patente)
     grafo.add_node("listar_polizas", nodo_listar_polizas)
@@ -863,7 +1031,9 @@ def construir_agente():
     grafo.add_node("responder", nodo_responder)
     grafo.add_node("compactar", nodo_compactar)
 
-    grafo.add_edge(START, "clasificar")
+    # Todo turno empieza por la foto (sin foto, ese paso no hace nada).
+    grafo.add_edge(START, "analizar_foto")
+    grafo.add_edge("analizar_foto", "clasificar")
     grafo.add_conditional_edges(
         "clasificar",
         rutear_desde_clasificar,

@@ -79,6 +79,8 @@ PRECIOS_USD_POR_MILLON = {
     "openai/gpt-oss-120b": {"entrada": 0.15, "entrada_cache": 0.075, "salida": 0.60},
     # https://console.groq.com/docs/model/openai/gpt-oss-20b (2026-09-23)
     "openai/gpt-oss-20b": {"entrada": 0.075, "entrada_cache": 0.037, "salida": 0.30},
+    # https://console.groq.com/docs/model/qwen/qwen3.8-27b (2026-09-25)
+    "qwen/qwen3.8-27b": {"entrada": 0.80, "entrada_cache": 0.80, "salida": 4.00},
 }
 
 
@@ -88,6 +90,20 @@ PRECIOS_USD_POR_MILLON = {
 # días, bajo pena de perder la indemnización. Como la fecha del siniestro se
 # conoce sin hora, se cuenta en días.
 PLAZO_DENUNCIA_DIAS = 3
+
+
+# --- Fotos ------------------------------------------------------------------
+# Modelo de visión: el único de Groq que acepta imágenes. Solo DESCRIBE la foto;
+# el dictamen lo sigue emitiendo el modelo principal.
+LLM_MODELO_VISION = "qwen/qwen3.8-27b"
+# En el plan gratuito, este modelo limita la salida a 1.000 tokens por minuto y
+# rechaza de entrada los pedidos que podrían pasarse: hay que fijar un máximo.
+# Una descripción usa ~110 tokens.
+VISION_MAX_TOKENS = 400
+# La foto se achica antes de mandarla: sube más rápido y gasta menos.
+FOTO_LADO_MAXIMO = 1024
+# Tamaño máximo del adjunto en el chat, en MB.
+FOTO_TAMANO_MAXIMO_MB = 10
 
 
 def ensure_dirs() -> None:

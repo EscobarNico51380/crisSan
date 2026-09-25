@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage
 
 import costos
 import llm
-from config import GROQ_API_KEY
+from config import FOTO_TAMANO_MAXIMO_MB, GROQ_API_KEY, ROOT
 
 # Recorrido sugerido: consultas pensadas para mostrar, en orden, lo que hace el
 # sistema. Cada una se envía con un botón de la barra lateral. Las que dependen
@@ -40,6 +40,17 @@ RECORRIDO = [
         "Póliza vencida: la rechaza un control del sistema, sin el LLM.",
     ),
     ("Mi DNI es 30555777", "Busca por DNI y lista las pólizas de la titular."),
+    (
+        "Me cayó granizo sobre la AC456BD",
+        "Con foto: el modelo de visión describe el daño y coincide con el relato.",
+        "ejemplos/fotos/granizo.jpg",
+    ),
+    (
+        "Me cayó granizo sobre la AB123CD",
+        "Con la foto de un choque frontal: no coincide con el relato de granizo, "
+        "así que pide peritaje.",
+        "ejemplos/fotos/choque_frontal.jpg",
+    ),
 ]
 
 # Nombres legibles para el selector de modelo de la barra lateral.
@@ -103,13 +114,16 @@ with st.sidebar:
     st.markdown("**Recorrido sugerido**")
     st.caption(
         "Tocá cada paso, en orden, para enviar esa consulta. También podés "
-        "escribir la tuya en cualquier momento. El recorrido completo usa unos "
-        "60.000 tokens."
+        "escribir la tuya en cualquier momento, con una foto si querés (clip del "
+        "chat). Los pasos con 📷 mandan una foto de ejemplo. El recorrido completo "
+        "usa unos 80.000 tokens."
     )
-    for n, (pregunta, que_muestra) in enumerate(RECORRIDO, 1):
-        if st.button(f"{n}. {pregunta}", key=f"recorrido-{n}", use_container_width=True):
-            # Se envía como si se hubiera escrito (ver el chat_input de abajo).
-            st.session_state.pendiente = pregunta
+    for n, (pregunta, que_muestra, *foto) in enumerate(RECORRIDO, 1):
+        etiqueta = f"{n}. {pregunta}" + (" 📷" if foto else "")
+        if st.button(etiqueta, key=f"recorrido-{n}", use_container_width=True):
+            # Se envía como si se hubiera escrito (ver el chat_input de abajo),
+            # con la foto de ejemplo si el paso tiene una.
+            st.session_state.pendiente = (pregunta, foto[0] if foto else None)
         st.caption(que_muestra)
     st.divider()
     if st.button("Reiniciar conversación", use_container_width=True):
@@ -136,18 +150,39 @@ agente = cargar_agente()
 # Mostramos el historial de la conversación.
 for mensaje in st.session_state.messages:
     with st.chat_message(mensaje["role"]):
+        if mensaje.get("foto"):
+            st.image(mensaje["foto"], width=320)
         st.markdown(mensaje["content"])
         if mensaje.get("costo"):
             st.caption(mensaje["costo"])
 
 # Entrada del usuario.
 # La consulta llega escrita en el chat o desde un botón del recorrido sugerido.
-pregunta_del_recorrido = st.session_state.pop("pendiente", None)
-if prompt := (
-    st.chat_input("Escribí tu consulta sobre tu póliza...") or pregunta_del_recorrido
-):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# Se puede adjuntar una foto por mensaje (clip del chat).
+entrada = st.chat_input(
+    "Escribí tu consulta sobre tu póliza...",
+    accept_file=True,
+    file_type=["jpg", "jpeg", "png", "webp"],
+    max_upload_size=FOTO_TAMANO_MAXIMO_MB,
+)
+pendiente = st.session_state.pop("pendiente", None)
+prompt, foto = "", None
+if entrada:
+    prompt = entrada.text or ""
+    if entrada.files:
+        foto = entrada.files[0].getvalue()
+elif pendiente:
+    prompt, ruta_foto = pendiente
+    if ruta_foto:
+        foto = (ROOT / ruta_foto).read_bytes()
+if foto and not prompt:
+    prompt = "Te mando una foto."
+
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt, "foto": foto})
     with st.chat_message("user"):
+        if foto:
+            st.image(foto, width=320)
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
@@ -156,7 +191,10 @@ if prompt := (
         with st.spinner("Consultando póliza y cláusulas..."):
             try:
                 resultado = agente.invoke(
-                    {"messages": [HumanMessage(content=prompt)]},
+                    {
+                        "messages": [HumanMessage(content=prompt)],
+                        "foto": llm.preparar_foto(foto) if foto else "",
+                    },
                     config={
                         "configurable": {"thread_id": st.session_state.thread_id},
                         "callbacks": [contador],
@@ -174,7 +212,9 @@ if prompt := (
         st.session_state.consumo_total = st.session_state.consumo_total + consumo
         costo_turno = f"Este turno: {costos.formatear(consumo)}"
         respaldo = sorted(
-            m for m in contador.usage_metadata if m != llm.modelo_principal()
+            m
+            for m in contador.usage_metadata
+            if m in llm.MODELOS and m != llm.modelo_principal()
         )
         if respaldo:
             costo_turno += (

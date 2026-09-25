@@ -68,7 +68,9 @@ def main() -> None:
         print(f"\n  [Este turno: {costos.formatear(consumo)}]")
         print(f"  [Conversación: {costos.formatear(total)}]")
         respaldo = sorted(
-            m for m in contador.usage_metadata if m != llm.modelo_principal()
+            m
+            for m in contador.usage_metadata
+            if m in llm.MODELOS and m != llm.modelo_principal()
         )
         if respaldo:
             print(f"  [Respondido con el modelo de respaldo: {', '.join(respaldo)}]")
