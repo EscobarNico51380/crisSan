@@ -31,10 +31,12 @@ No hace falta notebook.
 | Al consultar un reclamo respondía solo "está en estado Iniciado" | ✅ La ficha completa la arma el código, sin el LLM | `469418c`, `35fbdc5` |
 | Una póliza vencida sale cubierta | ✅ La vigencia y el pago se controlan con código, sin el LLM | `a48070e` |
 | "Me robaron el auto AJ222NP el 10 de mayo de 2026" se clasificó como consulta y no como denuncia | ✅ Con el modelo principal se clasifica bien (era el modelo chico) | batería final |
-| El plazo de denuncia se evalúa distinto según cómo se redacte | ✅ Lo decide el código mirando la base: si ya estaba denunciado muestra el reclamo; si no y pasaron más de 72 horas, rechaza. También evita reclamos duplicados | (este commit) |
+| El plazo de denuncia se evalúa distinto según cómo se redacte | ✅ Lo decide el código mirando la base: si ya estaba denunciado muestra el reclamo; si no y pasaron más de 72 horas, rechaza. También evita reclamos duplicados | `32decb9` |
 | El robo del auto todo riesgo con GNC (AD789EF) salió *Cubierto* 1 de 5 veces | ✅ Decidido: se acepta y se explica en la defensa | Es un límite real de los LLM: aun con `temperature=0`, no son completamente deterministas |
 | Cuando no hay precedentes del mismo producto, se muestran los de otros productos | ✅ Decidido: se deja como está | Se probó cargando el precedente sospechoso y el dictamen salió bien: no hay evidencia de que confunda |
 | La consola de Streamlit muestra decenas de errores *"No module named 'torchvision'"* | ⏳ Diagnosticado, sin acción por ahora | No rompe nada: el vigilante de archivos de Streamlit inspecciona todos los módulos cargados, y ~100 módulos de imágenes de `transformers` (que no usamos) fallan al cargarse sin `torchvision`. Streamlit atrapa cada error y sigue. Reproducido fuera de Streamlit: 102 módulos fallan. Probablemente es lo que vio Nicolás y por lo que instaló `torchvision` (no una diferencia de Linux): preguntarle. Arreglo propuesto: `fileWatcherType = "none"` en `.streamlit/config.toml`; si se confirma, sacar `torchvision` también de Linux |
+| Si el último paso recibe una respuesta vacía del modelo, el cliente ve "¿Podrías reformular tu consulta?" aunque su reclamo ya quedó registrado | ⏳ Propuesta: si ya hay reclamo registrado, armar la respuesta con código (la ficha del reclamo, como al consultarlo); si no, reintentar una vez con el otro modelo | Pasó 1 vez en la prueba de fotos del 25/09, al pasar del modelo principal al de respaldo |
+| La terminal de la instalación muestra avisos que parecen errores (versión nueva de pip, Hugging Face sin token, *symlinks* en Windows) | ⏳ Propuesta: apagarlos con variables de entorno en `iniciar.py` | Vistos en la prueba desde cero del 25/09 |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
 ## Features
@@ -57,7 +59,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Herramienta nueva: calcular cuánto paga el cliente (costo de la reparación menos la franquicia) | ⏳ | Es una cuenta: la hace el código, no el modelo. Como la calculadora del notebook de agentes de la cátedra |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |
 | Interpretar imágenes enviadas por el cliente | ✅ Una foto por mensaje en la web; el modelo de visión describe y el dictamen la usa como evidencia | `9f7e9c3` |
-| Probar los dictámenes con foto con el modelo principal | ⏳ | Se probaron con el de respaldo porque el principal no tenía cupo |
+| Probar los dictámenes con foto con el modelo principal | 🔶 | 6 casos bien con el principal el 25/09 (ver `DOCUMENTACION.md`). Faltan el choque con relato de granizo (paso 12 del recorrido) y el parabrisas del auto con GNC, que los respondió el respaldo |
 | Probar con fotos propias del grupo | ⏳ | Las de ejemplo son de Wikimedia Commons |
 | Exclusiones por gas licuado (GLP) y por uso para transporte de pasajeros | ⏳ A confirmar | El manual las tiene; se sumarían con el mismo mecanismo que el GNC |
 | Historial que sobreviva al cerrar la app (`SqliteSaver`) | ⏳ Baja prioridad | Suma una dependencia |
@@ -78,6 +80,8 @@ el agente ReAct y las imágenes se apoyan en eso.
   que hoy la respuesta depende del modelo.
   **Decisión provisoria:** queda documentado y se retoma más adelante. Si leyendo
   la póliza entera no se puede resolver, la respuesta será "Requiere peritaje".
+  En la prueba de fotos del 25/09 el modelo de respaldo dio *Rechazado* y
+  *Cubierto* para el mismo parabrisas del AF987XX: otra razón para fijarlo.
 
 ## Entregables
 
@@ -87,7 +91,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Mostrar el grafo coloreado según quién decide cada paso (código, RAG o LLM), con el recorrido de una consulta y los tres errores de ejemplo (ver `DOCUMENTACION.md`) | ⏳ |
 | Guion y grabación del video (vence el 30/09) | ⏳ |
 | Vaciar la tabla de siniestros antes de grabar (las pruebas quedan como precedentes) | ⏳ |
-| Repaso del TP1 | ⏳ |
+| Repaso del TP1 | ⏳ Es el clasificador de frutas de Kaggle. El enunciado del TP2 lo llama "Clasificación de alumnos con redes neuronales", que parece un resto del año pasado: confirmar con el profesor |
 
 ## Cierre (lo último antes de entregar)
 
@@ -96,7 +100,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | `d291f74` |
 | Reorganizar la documentación: se borra `ONBOARDING.md` (lo cubre el README) y `SETUP.md` pasa a ser `AGENTS.md`, la guía interna para el equipo y para asistentes de IA (`CLAUDE.md` la importa) | ✅ | `3085cb5` |
 | Armar el zip de la entrega: sin `.venv` ni `data/modelos`, sin los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`), con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
-| Prueba previa del grupo: clonar el repo en una carpeta nueva e instalar con `python iniciar.py`, en Windows y en Linux (Nicolás), y reportar sistema, versión de Python, tiempo y errores | ⏳ |
+| Prueba previa del grupo: clonar el repo en una carpeta nueva e instalar con `python iniciar.py`, en Windows y en Linux (Nicolás), y reportar sistema, versión de Python, tiempo y errores | ⏳ Windows ✅ el 25/09 (10 minutos, sin errores; ver `DOCUMENTACION.md`). Falta Linux |
 | Probar la instalación desde cero con el zip, siguiendo solo el README, en Windows y en Linux | ⏳ |
 
 ---
@@ -115,7 +119,7 @@ Análisis de Nicolás, con los estados actualizados. Los notebooks, pasados a
 | `create_agent`: el modelo decide si responder o llamar una herramienta (ReAct) | ❌ |
 | Herramientas con `@tool` (descripción desde el docstring, esquema desde los tipos) | ✅ |
 | Herramientas verificadas localmente, sin LLM | ⚠️ Se prueban a través del agente |
-| Backend separado, modelo intercambiable (`make_llm`) | ❌ |
+| Backend separado, modelo intercambiable (`make_llm`) | ⚠️ `make_llm` y selector de modelo en la web; falta otro proveedor |
 | Prompt de sistema con rol y reglas | ✅ |
 | Memoria con checkpointer + `thread_id` | ✅ |
 | Traza observable: herramienta, argumentos, resultado | ❌ |
@@ -147,7 +151,7 @@ Análisis de Nicolás, con los estados actualizados. Los notebooks, pasados a
 | Tokenización y lematización con NLTK, TF-IDF con Naive Bayes | — Concepto de clase, no requisito del agente |
 | Agente de juguete que decide la herramienta y muestra su traza | ❌ Se cubre con la traza observable |
 
-**Resumen:** 11 cumplidos · 6 parciales · 6 faltantes.
+**Resumen:** 11 cumplidos · 7 parciales · 5 faltantes.
 
 ---
 

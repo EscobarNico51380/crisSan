@@ -59,7 +59,7 @@ Todo queda **dentro de esta carpeta**:
 
 | Carpeta | Qué contiene | Tamaño |
 |---|---|---|
-| `.venv/` | Entorno de Python aislado con las librerías del proyecto (LangChain, LangGraph, PyTorch, Streamlit…) | ~1,7 GB |
+| `.venv/` | Entorno de Python aislado con las librerías del proyecto (LangChain, LangGraph, PyTorch, Streamlit…) | ~1,5 GB |
 | `data/modelos/` | Modelo de embeddings `multilingual-e5-base`, para buscar en el manual | ~1,1 GB |
 | `data/` | Base de datos de prueba (SQLite) e índice del manual (Chroma) | ~3 MB |
 
@@ -96,7 +96,7 @@ plan pago de Groq (con el gratuito, el costo real es cero).
 
 ## Recorrido sugerido
 
-La barra lateral del chat tiene un **recorrido sugerido**: diez consultas en
+La barra lateral del chat tiene un **recorrido sugerido**: doce consultas en
 orden, cada una con un botón que la envía. Debajo de cada botón se explica qué
 muestra. También se puede escribir cualquier consulta en el chat.
 

@@ -915,9 +915,14 @@ corta, volver a ejecutarlo retoma desde donde quedó.
 | Carpeta con `.venv` pero sin instalar | Reutilizó el entorno, verificó las librerías, descargó el modelo en `data/modelos` (1,1 GB), armó la base y el índice y validó la key. Tardó 3 minutos |
 | Ya instalado | Validó la key y a los 2 segundos el chat respondía en el navegador |
 | Sin key | La pidió, rechazó una falsa (*"La key no funcionó"*), aceptó la válida y la guardó en `.env` |
+| **Desde cero** (25/09/2026): el repositorio clonado en una carpeta nueva, sin `.venv` ni `data`, con el `.env` copiado. Windows 10, Python 3.13.12, `python iniciar.py --solo-instalar --si` | Terminó sin errores en **10 minutos y 21 segundos** (descarga a ~18 MB/s). `pip check` sin conflictos, el índice quedó en 148 fragmentos y la key se validó. Ocupa: `.venv` 1,50 GB y el modelo de embeddings 1,06 GB. Después, desde esa carpeta, la web respondió al segundo y una consulta con seguimiento (*¿Qué plan tengo para la patente AB123CD?* → *¿Y me cubre el granizo?*) contestó bien |
 
-Queda pendiente la prueba completa desde cero (carpeta nueva, descargando todo),
-en Windows y en Linux.
+En la prueba desde cero la terminal muestra tres avisos que no son errores pero
+lo parecen: que hay una versión nueva de pip, que las descargas de Hugging Face
+no usan token, y (dos veces) que Windows no permite *symlinks* en la caché de
+modelos.
+
+Falta la prueba desde cero en Linux.
 
 
 ---
@@ -1198,6 +1203,41 @@ probaron con el modelo de respaldo** (`gpt-oss-20b`), que es el más exigente.
 En la web, con un agente simulado: los pasos 11 y 12 del recorrido mandan el
 texto con su foto de ejemplo.
 
+**Con el modelo principal (25/09/2026, a la noche).** Se repitieron los casos y
+se sumaron otros. El principal tenía poco cupo: en cuanto se agotó, entró el
+respaldo, así que cada fila dice qué modelo dictaminó. Tabla de reclamos vacía
+al empezar; ~130.000 tokens en total.
+
+| Foto | Mensaje | Modelo | Resultado |
+|---|---|---|---|
+| Granizo | *Me cayó granizo sobre la AC456BD* (C+) | Principal | ✅ **Cubierto**, citando la cláusula del granizo para C+ |
+| Parabrisas roto | *Me cayó granizo sobre la AB123CD* (todo riesgo) | Principal | ✅ **Cubierto**, con la franquicia |
+| Choque frontal | *¿Me cubre esto? Es el AD789EF* (todo riesgo, GNC) | Principal | ✅ Denuncia; **Cubierto** |
+| Granizo, sin texto | — | Principal | ✅ Pidió la patente |
+| Granizo, visión caída (simulado) | *Me cayó granizo sobre la AG654JK* (plan B) | Principal | ✅ Aviso de la foto al principio; **Rechazado**: el plan B solo cubre daños totales |
+| Granizo, repetido | *Me cayó granizo sobre la AC456BD*, otra vez | Principal y respaldo | ✅ *"Ese hecho ya está denunciado"*, con la ficha del primero |
+| Choque frontal | *Me cayó granizo sobre la AB123CD* | Principal y respaldo | ✅ **Requiere peritaje** (*"El relato menciona granizo, mientras que la foto muestra una destrucción frontal típica de un choque"*), pero ❌ **la respuesta al cliente salió vacía** (ver abajo) |
+| Choque frontal | *Choqué contra un poste con la AJ222NP* (vencida) | Respaldo | ✅ **Rechazado** por el control de vigencia |
+| Choque frontal | *Choqué de frente contra un poste con la AE321GH* (plan A) | Respaldo | ✅ **Rechazado**: el plan A solo cubre daños a terceros |
+| Parabrisas roto | *Me rompieron el parabrisas de la AF987XX* (C+, GNC) | Respaldo | ⚠️ Una vez **Rechazado** y otra **Cubierto** |
+| Granizo | *Me cayó granizo sobre la AF987XX* (C+, GNC) | Respaldo | **Cubierto**: *"la exclusión por GNC se aplica solo a Incendio y Robo"* |
+
+Tres observaciones:
+
+- **La respuesta vacía.** En el caso del choque con relato de granizo, el
+  dictamen y el registro salieron bien (reclamo en *"En análisis"*), pero el
+  último paso, que redacta la respuesta, recibió un texto vacío del modelo
+  (justo cuando el principal se agotaba y entraba el respaldo). El cliente vio
+  *"Disculpá, no pude armar una respuesta en este momento. ¿Podrías reformular
+  tu consulta?"* aunque su reclamo quedó registrado. Si reenvía el mensaje, el
+  control de duplicados le muestra el reclamo, así que no se duplica.
+- **El GNC con cristales o granizo sigue dependiendo del modelo**: el respaldo
+  dio *Rechazado* y *Cubierto* para el mismo parabrisas. Es el caso ambiguo que
+  falta decidir.
+- **La foto del parabrisas, de muy cerca**, se describe como *"no se distingue
+  el vehículo"*: el modelo de visión no afirma lo que no ve, y el dictamen se
+  apoya en el relato, que es lo esperado.
+
 ### Duplicados por tipo de hecho
 
 Al armar los pasos con foto del recorrido apareció un problema en el control de
@@ -1209,7 +1249,8 @@ tipo con palabras variables ("Robo Total", "Hurto del vehículo").
 
 ### Pendiente
 
-- Probar los dictámenes con foto con el **modelo principal**.
+- Probar con el **modelo principal** el choque con relato de granizo y el
+  parabrisas del auto con GNC (en la prueba del 25/09 respondió el respaldo).
 - Probar con **fotos propias** del grupo.
 - La comparación de la **patente de la foto** no se probó con una foto real:
   ninguna de las de ejemplo muestra la patente.
@@ -1263,10 +1304,12 @@ principal.
 
 ### Pruebas que faltan
 
-- **Los casos con foto, con el modelo principal** (se probaron con el respaldo).
+- **Dos casos con foto, con el modelo principal**: el choque con relato de
+  granizo y el parabrisas del auto con GNC (el resto ya se probó con el
+  principal).
 - **Fotos propias**, idealmente una donde se lea la patente (la comparación de
   patentes no se probó con una foto real).
 - **El recorrido completo en la web, de punta a punta**, con el modelo principal,
   antes de grabar el video.
-- **La instalación desde cero** con `python iniciar.py` en una carpeta nueva, en
-  Windows y en Linux.
+- **La instalación desde cero en Linux** (en Windows se hizo el 25/09: ver la
+  sección de instalación).

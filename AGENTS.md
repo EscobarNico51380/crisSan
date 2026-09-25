@@ -73,7 +73,7 @@ Después de cambiar código, reiniciar Streamlit: el agente queda en caché
 |---|---|---|
 | `openai/gpt-oss-120b` | Principal | No |
 | `openai/gpt-oss-20b` | Respaldo | No |
-| `qwen/qwen3.8-27b` | Candidato para interpretar imágenes (pendiente) | Sí (mínimo 32×32 px; ~1.300-1.800 tokens por foto) |
+| `qwen/qwen3.8-27b` | Describe las fotos del cliente | Sí (mínimo 32×32 px; ~1.300-1.800 tokens por foto) |
 
 ---
 
