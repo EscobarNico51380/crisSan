@@ -3,7 +3,8 @@
 Para el equipo y para cualquier asistente de IA que trabaje en este repositorio.
 El README es para quien **usa** el sistema; esta guía es para quien lo
 **modifica**. La arquitectura, las decisiones y las dificultades resueltas están
-en `DOCUMENTACION.md`; lo que falta hacer, en `PENDIENTES.md`.
+en `DOCUMENTACION.md`; lo que falta hacer, en `PENDIENTES.md`. Para la defensa:
+`guia_presentacion.md` (slides y video) y `repaso_TP1.md`.
 
 ---
 

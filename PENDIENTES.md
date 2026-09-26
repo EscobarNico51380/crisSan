@@ -87,11 +87,11 @@ el agente ReAct y las imágenes se apoyan en eso.
 
 | Entregable | Estado |
 |---|---|
-| Slides de la defensa | ⏳ |
+| Slides de la defensa | 🔶 Guía con el contenido de cada slide y lo que se dice: `guia_presentacion.md`. Falta la parte del ReAct y generarlas |
 | Mostrar el grafo coloreado según quién decide cada paso (código, RAG o LLM), con el recorrido de una consulta y los tres errores de ejemplo (ver `DOCUMENTACION.md`) | ⏳ |
-| Guion y grabación del video (vence el 30/09) | ⏳ |
+| Guion y grabación del video (vence el 30/09) | 🔶 Estructura, tiempos, demo y lista de antes de grabar en `guia_presentacion.md`. Falta repartir quién habla, el ReAct y grabar |
 | Vaciar la tabla de siniestros antes de grabar (las pruebas quedan como precedentes) | ⏳ |
-| Repaso del TP1 | ⏳ Es el clasificador de frutas de Kaggle. El enunciado del TP2 lo llama "Clasificación de alumnos con redes neuronales", que parece un resto del año pasado: confirmar con el profesor |
+| Repaso del TP1 | 🔶 `repaso_TP1.md`: preguntas probables con respuesta, los conceptos de la cátedra y dos inconsistencias del notebook para tener preparadas. Falta que lo lea el grupo y que cada uno sume lo suyo si su TP1 fue distinto |
 
 ## Cierre (lo último antes de entregar)
 
@@ -99,7 +99,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 |---|---|
 | `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | `d291f74` |
 | Reorganizar la documentación: se borra `ONBOARDING.md` (lo cubre el README) y `SETUP.md` pasa a ser `AGENTS.md`, la guía interna para el equipo y para asistentes de IA (`CLAUDE.md` la importa) | ✅ | `3085cb5` |
-| Armar el zip de la entrega: sin `.venv` ni `data/modelos`, sin los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`), con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
+| Armar el zip de la entrega: sin `.venv` ni `data/modelos`, sin los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`, `repaso_TP1.md`, `guia_presentacion.md`), con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
 | Prueba previa del grupo: clonar el repo en una carpeta nueva e instalar con `python iniciar.py`, en Windows y en Linux (Nicolás), y reportar sistema, versión de Python, tiempo y errores | ⏳ Windows ✅ el 25/09 (10 minutos, sin errores; ver `DOCUMENTACION.md`). Falta Linux |
 | Probar la instalación desde cero con el zip, siguiendo solo el README, en Windows y en Linux | ⏳ |
 
