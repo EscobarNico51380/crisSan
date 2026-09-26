@@ -106,7 +106,7 @@ TODO dentro de esta carpeta:
 
   1. Crear un entorno de Python aislado (carpeta .venv) e instalar las
      librerías del proyecto: LangChain, LangGraph, PyTorch, Streamlit, etc.
-     Ocupa unos 1,7 GB.
+     Ocupa unos 1,5 GB.
   2. Descargar el modelo de embeddings multilingual-e5-base, que se usa
      para buscar en el manual de la póliza (carpeta data/modelos).
      Ocupa unos 1,1 GB.
@@ -119,8 +119,11 @@ TODO dentro de esta carpeta:
     usuario con dos archivos de menos de 100 bytes.
   - No necesita permisos de administrador ni cambia la configuración de
     tu computadora.
-  - Descarga unos 3 GB en total. Según la conexión, tarda entre 5 y 20
-    minutos. Al terminar, se abre el chat en el navegador.
+  - Descarga unos 1,5 GB y ocupa unos 2,6 GB. Según la conexión, tarda
+    entre 5 y 20 minutos. Al terminar, se abre el chat en el navegador.
+  - Durante la instalación pueden aparecer avisos (una versión nueva de
+    pip, descargas de Hugging Face sin token, "symlinks" en Windows): no
+    son errores y se pueden ignorar.
   - Para desinstalar: borrá esta carpeta.
 """
     )

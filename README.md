@@ -42,8 +42,8 @@ En Windows también funciona `py iniciar.py`.
 **La primera vez**, el script:
 
 1. muestra qué va a instalar y pide confirmación;
-2. instala todo (descarga unos 3 GB; tarda entre 5 y 20 minutos, según la
-   conexión);
+2. instala todo (descarga unos 1,5 GB y ocupa unos 2,6 GB; tarda entre 5 y
+   20 minutos, según la conexión: en nuestra prueba desde cero, 10);
 3. verifica la API key;
 4. abre el chat en el navegador.
 
@@ -197,6 +197,7 @@ está pensado para probar una situación distinta.
 | Síntoma | Qué hacer |
 |---|---|
 | `python` no se reconoce como comando, o se abre la Microsoft Store | Python no está instalado o no está en el PATH. Instalarlo desde python.org tildando "Add python.exe to PATH", o probar con `py iniciar.py` |
+| Durante la instalación aparecen avisos: *"A new release of pip is available"*, *"You are sending unauthenticated requests to the HF Hub"* o *"cache-system uses symlinks"* | No son errores: se pueden ignorar. La instalación sigue sola |
 | Se cortó la descarga o la instalación | Volver a ejecutar `python iniciar.py`: retoma desde donde quedó |
 | El chat dice *"El sistema no puede responder consultas en este momento. Probá de nuevo en N minutos."* | Se agotó el cupo diario de los dos modelos. Esperar lo que indica |
 | *"El chat no pudo arrancar"* | Probablemente ya hay otra ventana del chat abierta. Cerrarla (`Ctrl+C` en su terminal) y volver a ejecutar |

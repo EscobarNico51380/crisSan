@@ -915,12 +915,13 @@ corta, volver a ejecutarlo retoma desde donde quedó.
 | Carpeta con `.venv` pero sin instalar | Reutilizó el entorno, verificó las librerías, descargó el modelo en `data/modelos` (1,1 GB), armó la base y el índice y validó la key. Tardó 3 minutos |
 | Ya instalado | Validó la key y a los 2 segundos el chat respondía en el navegador |
 | Sin key | La pidió, rechazó una falsa (*"La key no funcionó"*), aceptó la válida y la guardó en `.env` |
-| **Desde cero** (25/09/2026): el repositorio clonado en una carpeta nueva, sin `.venv` ni `data`, con el `.env` copiado. Windows 10, Python 3.13.12, `python iniciar.py --solo-instalar --si` | Terminó sin errores en **10 minutos y 21 segundos** (descarga a ~18 MB/s). `pip check` sin conflictos, el índice quedó en 148 fragmentos y la key se validó. Ocupa: `.venv` 1,50 GB y el modelo de embeddings 1,06 GB. Después, desde esa carpeta, la web respondió al segundo y una consulta con seguimiento (*¿Qué plan tengo para la patente AB123CD?* → *¿Y me cubre el granizo?*) contestó bien |
+| **Desde cero** (25/09/2026): el repositorio clonado en una carpeta nueva, sin `.venv` ni `data`, con el `.env` copiado. Windows 10, Python 3.13.12, `python iniciar.py --solo-instalar --si` | Terminó sin errores en **10 minutos y 21 segundos**: descargó ~350 MB de librerías (a ~18 MB/s) y 1,1 GB del modelo de embeddings. `pip check` sin conflictos, el índice quedó en 148 fragmentos y la key se validó. Ocupa: `.venv` 1,50 GB y el modelo de embeddings 1,06 GB. Después, desde esa carpeta, la web respondió al segundo y una consulta con seguimiento (*¿Qué plan tengo para la patente AB123CD?* → *¿Y me cubre el granizo?*) contestó bien |
 
 En la prueba desde cero la terminal muestra tres avisos que no son errores pero
 lo parecen: que hay una versión nueva de pip, que las descargas de Hugging Face
 no usan token, y (dos veces) que Windows no permite *symlinks* en la caché de
-modelos.
+modelos. Quedaron aclarados en el README y en el mensaje inicial de
+`iniciar.py`; apagarlos del todo es un pendiente.
 
 Falta la prueba desde cero en Linux.
 
