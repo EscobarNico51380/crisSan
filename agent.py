@@ -1253,6 +1253,7 @@ def construir_agente():
             "consultar_poliza": "consultar_poliza",
             "pedir_patente": "pedir_patente",
             "agente_react": "agente_react",
+            "responder": "responder",
         },
     )
     # Todos los caminos terminan pasando por "compactar", que sólo actúa
