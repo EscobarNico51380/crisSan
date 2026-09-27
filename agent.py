@@ -202,6 +202,11 @@ def mensaje_para_el_usuario(error: Exception) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Contacto de la línea de información del manual (pág. 20/27).
+CONTACTO_CONSULTAS = "0810-222-8887"
+
+
+# ---------------------------------------------------------------------------
 # Estado del grafo
 # ---------------------------------------------------------------------------
 class EstadoAgente(TypedDict):
@@ -339,7 +344,9 @@ PROMPT_CLASIFICAR = (
     "- 'siniestro': reporta un hecho ocurrido (choque, robo, incendio, granizo, "
     "vuelco) o pide auxilio por algo que le está pasando (grúa, batería, "
     "rueda pinchada, falla mecánica).\n"
-    "- 'general': pregunta genérica sobre el manual/coberturas, sin su póliza.\n"
+    "- 'general': pregunta genérica sobre el manual/coberturas sin su póliza, O "
+    "sobre un trámite o procedimiento (avanzar o apurar un reclamo, apelar, dar "
+    "de baja, cambiar de plan, cuánto tarda).\n"
     "- 'charla': saludo, agradecimiento o texto trivial.\n"
     "Regla: si menciona patente o DNI → 'consulta' (salvo que reporte un hecho → 'siniestro').\n"
     "Si hay HISTORIAL RECIENTE, usalo para entender a qué se refiere el mensaje "
@@ -501,7 +508,12 @@ PROMPT_REACT = (
     "tomar la denuncia indicando la patente del vehículo.\n"
     "7. Si el cliente solo da su DNI o una patente, mostrale directamente sus "
     "pólizas o su póliza: no le preguntes si quiere verlas.\n"
-    "8. Español rioplatense (tratalo de vos), claro y directo. Sin muletillas "
+    "8. Si la pregunta es sobre un trámite o procedimiento que no podés "
+    "gestionar (avanzar o apurar un reclamo, apelar, dar de baja, cuánto "
+    "tarda), decilo con honestidad: no muestres la ficha del reclamo como si "
+    "respondiera. Ofrecé contactar a un asesor de San Cristóbal al "
+    f"{CONTACTO_CONSULTAS} o, si quiere, consultar el estado de su reclamo.\n"
+    "9. Español rioplatense (tratalo de vos), claro y directo. Sin muletillas "
     "iniciales.\n"
 )
 
@@ -1101,10 +1113,6 @@ def nodo_registrar(state: EstadoAgente) -> dict:
     }
 
 
-# Contacto de la línea de información del manual (pág. 20/27).
-CONTACTO_CONSULTAS = "0810-222-8887"
-
-
 def nodo_derivar_humano(state: EstadoAgente) -> dict:
     """Hecho que no coincide con ninguna cobertura del manual → derivar a un asesor.
 
@@ -1263,9 +1271,15 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
     intencion = state["intencion"]
     mensaje = state["messages"][-1].content.lower()
 
-    # Señales EXPLÍCITAS del mensaje actual (determinísticas, máxima prioridad).
-    # Para el reclamo se mira también la pregunta reescrita por el clasificador:
-    # en "¿y por qué me lo aprobaron?" la palabra "reclamo" solo aparece ahí.
+    # 'general' va ANTES que la heurística de "reclamo": una pregunta de
+    # trámite ("¿cómo avanzo mi reclamo?") se clasifica 'general' y debe ir al
+    # subagente ReAct, no a mostrar la ficha del reclamo.
+    if intencion == "general":
+        return "agente_react"
+
+    # Señales EXPLÍCITAS del mensaje actual (determinísticas). Para el reclamo
+    # se mira también la pregunta reescrita por el clasificador: en
+    # "¿y por qué me lo aprobaron?" la palabra "reclamo" solo aparece ahí.
     reescrita = (state.get("consulta") or "").lower()
     menciona_reclamo = any(
         palabra in texto
@@ -1285,9 +1299,9 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
     tiene_datos = extraer_patente(mensaje) or extraer_dni(mensaje)
     if intencion == "charla" and not tiene_datos:
         return "responder"
-    # Preguntas abiertas y consultas sobre la póliza, los reclamos o cuánto
-    # paga: el subagente ReAct decide qué herramienta usar.
-    if intencion == "general" or state.get("patente") or state.get("dni"):
+    # Consultas sobre la póliza, los reclamos o cuánto paga: el subagente
+    # ReAct decide qué herramienta usar.
+    if state.get("patente") or state.get("dni"):
         return "agente_react"
     return "pedir_patente"
 

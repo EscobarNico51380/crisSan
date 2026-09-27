@@ -167,11 +167,12 @@ del turno).
 
 **Routing:**
 ```
+general (manual o trámites: "¿cómo avanzo mi reclamo?") → agente_react
 menciona un reclamo (no "reclamos") y hay uno → consultar_reclamo
 siniestro con patente     → consultar_poliza (camino fijo del dictamen)
 siniestro sin patente     → pedir_patente
 charla sin patente ni DNI → responder
-general, o consulta con patente o DNI (del mensaje o recordados) → agente_react
+consulta con patente o DNI (del mensaje o recordados) → agente_react
 (ninguno)                 → pedir_patente
 ```
 
@@ -288,6 +289,7 @@ se mantiene acotado con una ventana + resumen (§16).
 | 39 | Una consulta por el ReAct falló con `413 Request too large` | Cada búsqueda en el manual devuelve ~10 fragmentos (~2.500 tokens) y el ReAct buscó varias veces en el mismo pedido: pasó el límite de 8.000 tokens por minuto del plan gratuito | La herramienta del ReAct devuelve los 6 mejores fragmentos y el prompt le pide buscar una sola vez; el dictamen sigue con los ~10 (§28) |
 | 40 | "¿Qué reclamos tengo?" mostraba solo el último reclamo, y "¿cuánto pago si el arreglo sale 800.000?" se tomaba como una denuncia | El ruteo mandaba todo lo que dijera "reclamo" a la ficha del último, y el clasificador veía un daño | "Reclamos", en plural, va al ReAct (`listar_reclamos`); el clasificador toma como consulta las preguntas de cuánto paga (§28) |
 | 41 | Si el modelo devolvía una respuesta vacía, el cliente veía "¿Podrías reformular tu consulta?", aunque su reclamo ya estuviera registrado | `gpt-oss` a veces gasta la respuesta entera en razonar | Un reintento; y en una denuncia la ficha la arma el código, así que nunca queda vacía (§28) |
+| 42 | Al preguntar cómo avanzar o terminar un reclamo ("¿cómo puedo avanzar para terminar mi reclamo?"), el sistema repetía la ficha del reclamo una y otra vez, sin contestar la pregunta | La heurística del ruteo "menciona 'reclamo' + hay un reclamo en memoria" capturaba CUALQUIER mensaje con esa palabra y lo mandaba al nodo determinístico `consultar_reclamo`, que muestra la ficha sin pasar por el LLM. La pregunta de trámite/procedimiento no encajaba en ninguna intención, así que nunca llegaba a un prompt que pudiera admitir "no puedo responder" | La intención `general` ahora cubre también trámites/procedimientos; el ruteo evalúa `general` antes que la heurística de reclamo; y `PROMPT_REACT` ganó una regla de honestidad que deriva a un asesor al 0810-222-8887 en lugar de volcar la ficha |
 
 ---
 

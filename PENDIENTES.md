@@ -39,6 +39,7 @@ No hace falta notebook.
 | La traza de la póliza vencida decía "Cubierto" y el chat "Rechazado" | ✅ Muestra el dictamen final y, si un control lo cambió, lo que había dicho el modelo | `5a41204` |
 | Un pedido de grúa se derivaba a un asesor como "no reconocido" | ✅ Tipo "Asistencia mecánica" (dictamen Asistencia 24) | `5a41204` |
 | Al registrar una denuncia, el modelo dio un número de reclamo equivocado, y en la vencida enterró el rechazo | ✅ La ficha la arma el código; el modelo agrega los pasos a seguir | `5a41204` |
+| "¿Cómo avanzo para terminar mi reclamo?" mostraba la ficha del reclamo una y otra vez, en vez de decir que no puede gestionarlo | ✅ Vitto: los trámites van al ReAct, que lo dice con honestidad y deriva al 0810-222-8887 (probado el 27/09 con eso y con "¿me pueden dar de baja la póliza?") | `b16be68` |
 | Una consulta por el ReAct superó el límite de tokens por minuto (413) | ✅ 6 fragmentos por búsqueda y una sola búsqueda por pregunta | `5a41204` |
 | La terminal de la instalación muestra avisos que parecen errores (versión nueva de pip, Hugging Face sin token, *symlinks* en Windows) | ⏳ Propuesta: apagarlos con variables de entorno en `iniciar.py` | Vistos en la prueba desde cero del 25/09 |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
