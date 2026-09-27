@@ -10,11 +10,13 @@ Combina dos caminos según la intención del usuario:
                   (o, si el tipo de siniestro no está en el manual)
                   -> derivar_humano -> END
 
-2. CAMINO ReAct (consulta / general / charla): un subagente creado con
+2. CAMINO ReAct (consulta / general): un subagente creado con
    ``create_agent`` recibe las herramientas de LECTURA y decide por sí mismo
    cuál invocar (patrón ReAct: decidir -> actuar -> observar -> responder).
 
        clasificar -> agente_react -> END
+
+Los saludos y la charla van directo a ``responder``, sin herramientas.
 
 La memoria conversacional usa el checkpointer (MemorySaver) + thread_id: el
 historial vive en ``messages``. La traza observable de cada turno (decisiones,
@@ -52,12 +54,12 @@ from config import (
     HISTORIAL_UMBRAL_RESUMEN,
     PLAZO_DENUNCIA_DIAS,
 )
-from rag import buscar_exclusiones
+from rag import buscar_clausulas
 from tools import (
     HERRAMIENTAS_LECTURA,
-    consultar_clausulas_poliza,
     consultar_datos_poliza,
     consultar_siniestros_previos,
+    exclusiones_del_vehiculo,
     registrar_siniestro,
 )
 
@@ -138,6 +140,28 @@ def extraer_texto(content) -> str:
     return str(content)
 
 
+# Último recurso si el modelo devuelve una respuesta vacía dos veces seguidas.
+RESPUESTA_VACIA = (
+    "Disculpá, no pude armar una respuesta en este momento. "
+    "¿Podrías reformular tu consulta?"
+)
+
+
+def _texto_con_reintento(llamar) -> str:
+    """Llama al modelo y, si devuelve texto vacío, reintenta una vez.
+
+    ``gpt-oss`` a veces gasta la respuesta entera en razonar y devuelve el
+    contenido vacío (pasó en la prueba de fotos del 25/09). Es pasajero: un
+    reintento suele alcanzar. Devuelve "" si las dos veces vino vacío.
+    """
+    for intento in range(2):
+        texto = extraer_texto(llamar().content).strip()
+        if texto:
+            return texto
+        print(f"[modelo] respuesta vacía (intento {intento + 1} de 2)")
+    return ""
+
+
 def mensaje_para_el_usuario(error: Exception) -> str:
     """Traduce un error del sistema a un mensaje apto para el chat.
 
@@ -175,18 +199,6 @@ def mensaje_para_el_usuario(error: Exception) -> str:
         "El sistema no puede responder consultas en este momento. "
         f"Probá de nuevo {cuando}."
     )
-
-
-# ---------------------------------------------------------------------------
-# Exclusiones que dependen del vehículo
-# ---------------------------------------------------------------------------
-# El cliente no las menciona ("me robaron el auto" no dice que tiene GNC), así
-# que la búsqueda con su mensaje no las trae. Se buscan aparte, con una
-# consulta armada por el sistema, sólo si el vehículo tiene la característica.
-CONSULTA_EXCLUSIONES_GNC = (
-    "exclusiones vehiculo adaptado para ser propulsado por gas natural comprimido GNC"
-)
-CLAVES_GNC = ("gnc", "gas natural comprimido")
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +261,11 @@ class AnalisisEntrada(BaseModel):
 # Tipos de siniestro tomados de la LISTA NUMERADA del manual de coberturas
 # (secciones 1 a 13). Se excluyen "Reposición 0 km" (11) y "Gastos por baja del
 # vehículo" (12): no son hechos que el usuario reporta, sino prestaciones que
-# derivan de una pérdida total. "No reconocido" es el centinela para un hecho
-# que no coincide con ninguna cobertura del manual (→ se deriva a un asesor).
+# derivan de una pérdida total. "Asistencia mecánica" no es una cobertura de
+# daños sino el servicio de Asistencia 24 del manual (grúa, auxilio): sin ella,
+# un pedido de grúa terminaba en "No reconocido" y se derivaba a un asesor.
+# "No reconocido" es el centinela para un hecho que no coincide con ninguna
+# cobertura del manual (→ se deriva a un asesor).
 TIPOS_SINIESTRO = (
     "Responsabilidad Civil",   # 1) daños a terceros
     "Robo o Hurto Total",      # 2)
@@ -263,6 +278,7 @@ TIPOS_SINIESTRO = (
     "Reposición de Ruedas",    # 9) robo o hurto de ruedas
     "Granizo",                 # 10)
     "Accidente Parcial",       # 13)
+    "Asistencia mecánica",     # Asistencia 24: grúa, batería, auxilio
     "No reconocido",           # centinela: sin cobertura en el manual
 )
 
@@ -320,7 +336,9 @@ PROMPT_CLASIFICAR = (
     "Sos el ROUTER de un sistema RAG de seguros San Cristóbal.\n"
     "Clasificá el mensaje en UNA de estas intenciones:\n"
     "- 'consulta': pregunta o da datos de SU póliza (patente o DNI).\n"
-    "- 'siniestro': reporta un hecho ocurrido (choque, robo, incendio, granizo, vuelco).\n"
+    "- 'siniestro': reporta un hecho ocurrido (choque, robo, incendio, granizo, "
+    "vuelco) o pide auxilio por algo que le está pasando (grúa, batería, "
+    "rueda pinchada, falla mecánica).\n"
     "- 'general': pregunta genérica sobre el manual/coberturas, sin su póliza.\n"
     "- 'charla': saludo, agradecimiento o texto trivial.\n"
     "Regla: si menciona patente o DNI → 'consulta' (salvo que reporte un hecho → 'siniestro').\n"
@@ -330,6 +348,8 @@ PROMPT_CLASIFICAR = (
     "'siniestro' es sólo un hecho que OCURRIÓ. Una hipótesis ('¿y si hubiera "
     "sido granizo?', '¿me cubriría si...?') es 'consulta' si hay una póliza en "
     "juego, o 'general' si no.\n"
+    "Preguntar cuánto le toca pagar por un arreglo, o qué reclamos tiene, es "
+    "'consulta', aunque mencione un daño: no está denunciando un hecho nuevo.\n"
     "Si el cliente adjuntó la FOTO de un daño y pregunta si está cubierto o "
     "cuenta qué pasó, es 'siniestro': el hecho ocurrió.\n"
     "Además devolvé el mensaje reescrito para que se entienda sin el historial.\n"
@@ -350,6 +370,18 @@ PROMPT_RESPONDER = (
     "5. Si informás sobre un reclamo, dá sus datos completos: número, vehículo "
     "y patente, qué pasó y cuándo, el dictamen con su motivo y el estado. No "
     "respondas solo con el estado."
+)
+
+# Para la respuesta a una denuncia: la ficha la muestra el código.
+PROMPT_PASOS_A_SEGUIR = (
+    "El sistema ya le muestra al cliente la ficha de su reclamo, con el número, "
+    "el dictamen, el motivo y el estado. Vos escribí SOLO lo que va debajo de "
+    "la ficha: en 2 a 5 líneas, qué tiene que hacer ahora el cliente según las "
+    "cláusulas (por ejemplo, la denuncia policial en un robo). No repitas la "
+    "ficha, el número de reclamo ni el dictamen. El dictamen es definitivo: no "
+    "lo contradigas; si fue Rechazado, no le expliques cómo tramitar la "
+    "cobertura, sino qué puede hacer (por ejemplo, regularizar el pago o "
+    "consultar a un asesor)."
 )
 
 # Para los mensajes de charla (saludos, agradecimientos, temas ajenos). Sin
@@ -422,6 +454,9 @@ PROMPT_DICTAMEN = (
     "TIPOS DE SINIESTRO VÁLIDOS (tomados del manual): "
     + ", ".join(TIPOS_SINIESTRO)
     + ".\n"
+    "Una falla mecánica, una batería descargada, una rueda pinchada o un "
+    "pedido de grúa o auxilio es 'Asistencia mecánica', con determinación "
+    "'Asistencia 24'.\n"
     "Si el hecho relatado NO coincide con NINGUNO de esos tipos, usá "
     "'No reconocido' como tipo_siniestro y 'Requiere peritaje' como "
     "determinación. NO inventes un tipo nuevo.\n\n"
@@ -447,17 +482,27 @@ PROMPT_RESUMEN = (
 PROMPT_REACT = (
     "Sos 'San Cris', el asistente virtual de seguros San Cristóbal.\n"
     "Tenés herramientas de SOLO LECTURA para consultar pólizas, cláusulas del "
-    "manual, pólizas por DNI y el estado de un reclamo.\n"
+    "manual, pólizas por DNI, los reclamos y cuánto paga el cliente de un "
+    "arreglo.\n"
     "Reglas:\n"
     "1. Elegí la herramienta que corresponda a la pregunta. Si necesitás más "
-    "de un dato, podés llamar varias herramientas en secuencia.\n"
-    "2. Usá SOLO la información que devuelven las herramientas. No inventes "
+    "de un dato, podés llamar varias herramientas en secuencia. Buscá en el "
+    "manual una sola vez por pregunta, con una consulta que resuma todo lo "
+    "que necesitás.\n"
+    "2. Si la pregunta es sobre la cobertura de un vehículo en particular, "
+    "pasale su patente a consultar_clausulas_poliza: así se suman sus "
+    "exclusiones (por ejemplo, las del GNC).\n"
+    "3. No hagas cuentas de dinero vos: usá calcular_pago_cliente.\n"
+    "4. Usá SOLO la información que devuelven las herramientas. No inventes "
     "coberturas, montos, emails, teléfonos, portales ni procedimientos.\n"
-    "3. Si falta un dato (patente, DNI o número de reclamo), pedilo en vez de "
+    "5. Si falta un dato (patente, DNI o número de reclamo), pedilo en vez de "
     "adivinar.\n"
-    "4. Si el usuario describe un siniestro para denunciar, explicá que podés "
+    "6. Si el usuario describe un siniestro para denunciar, explicá que podés "
     "tomar la denuncia indicando la patente del vehículo.\n"
-    "5. Español rioplatense, claro y directo. Sin muletillas iniciales.\n"
+    "7. Si el cliente solo da su DNI o una patente, mostrale directamente sus "
+    "pólizas o su póliza: no le preguntes si quiere verlas.\n"
+    "8. Español rioplatense (tratalo de vos), claro y directo. Sin muletillas "
+    "iniciales.\n"
 )
 
 # Subagente ReAct: el LLM decide qué herramienta de lectura invocar. Se crea
@@ -721,21 +766,30 @@ def nodo_agente_react(state: EstadoAgente) -> dict:
                 content="Datos ya conocidos del cliente: " + ", ".join(conocidos)
             )
         )
+    if state.get("descripcion_foto"):
+        mensajes.append(
+            SystemMessage(
+                content=(
+                    "El cliente adjuntó una foto. Descripción automática (puede "
+                    f"tener errores):\n{state['descripcion_foto']}"
+                )
+            )
+        )
     mensajes.extend(state["messages"])
 
     # ``invocar_llm`` crea el subagente con el modelo que tenga cupo y reintenta
     # ante errores transitorios.
-    resultado = invocar_llm(construir_react, {"messages": mensajes})
-    mensajes_resultado = resultado["messages"]
-    respuesta = extraer_texto(mensajes_resultado[-1].content).strip()
-    if not respuesta:
-        # Fallback defensivo ante flakiness o rate limits.
-        respuesta = (
-            "Disculpá, no pude armar una respuesta en este momento. "
-            "¿Podrías reformular tu consulta?"
-        )
+    mensajes_resultado: list[AnyMessage] = []
+
+    def correr_react():
+        nonlocal mensajes_resultado
+        resultado = invocar_llm(construir_react, {"messages": mensajes})
+        mensajes_resultado = resultado["messages"]
+        return mensajes_resultado[-1]
+
+    respuesta = _texto_con_reintento(correr_react) or RESPUESTA_VACIA
     return {
-        "messages": [AIMessage(content=respuesta)],
+        "messages": [AIMessage(content=_con_aviso_de_foto(state, respuesta))],
         "evidencia": state.get("evidencia", []) + _extraer_traza(mensajes_resultado),
     }
 
@@ -781,7 +835,9 @@ def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
     # Buscamos con la versión reescrita por el clasificador: un seguimiento
     # como "¿y con granizo?" suelto recupera cláusulas al azar.
     consulta = state.get("consulta") or state["messages"][-1].content
-    resultado = consultar_clausulas_poliza.invoke({"consulta": consulta})
+    # La búsqueda completa (~10 fragmentos), sin el recorte que tiene la
+    # herramienta del ReAct: el dictamen se probó con estos fragmentos.
+    resultado = buscar_clausulas(consulta)
 
     # Segunda búsqueda, dirigida a las exclusiones que dependen del vehículo.
     # Sin ella el dictamen cubría un robo o un incendio de un auto con GNC,
@@ -790,12 +846,8 @@ def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
     # recordada de un turno anterior no tiene por qué pesar.
     exclusiones = ""
     patente = state.get("patente", "")
-    if (
-        state.get("intencion") in ("consulta", "siniestro")
-        and patente
-        and database.vehiculo_tiene_gnc(patente)
-    ):
-        exclusiones = buscar_exclusiones(CONSULTA_EXCLUSIONES_GNC, CLAVES_GNC)
+    if state.get("intencion") in ("consulta", "siniestro") and patente:
+        exclusiones = exclusiones_del_vehiculo(patente)
     return {
         "clausulas": resultado,
         "exclusiones": exclusiones,
@@ -955,12 +1007,15 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
 
     determinacion = resultado.determinacion
     fundamento = resultado.fundamento
+    control = ""  # qué control del sistema cambió lo que dijo el modelo
     motivo = motivo_de_rechazo_administrativo(
         database.obtener_vigencia(state.get("patente", "")), fecha_siniestro, hoy
     )
     if motivo:
         determinacion, fundamento = "Rechazado", motivo
+        control = "vigencia, pago y plazo de denuncia de la póliza"
     elif comparacion and comparacion.coincide == "no":
+        control = "comparación de la foto con el relato"
         # El modelo juzga si la foto y el relato cuentan lo mismo (es
         # interpretación); la consecuencia la decide el código.
         determinacion = "Requiere peritaje"
@@ -972,6 +1027,7 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     elif state.get("patente_foto") and state["patente_foto"] != state.get("patente"):
         # La patente que se lee en la foto no es la del auto asegurado: lo
         # compara el código. No prueba fraude, pero hay que verificarlo.
+        control = "patente que se lee en la foto"
         determinacion = "Requiere peritaje"
         fundamento = (
             f"La patente que se ve en la foto ({state['patente_foto']}) no coincide "
@@ -987,12 +1043,23 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
             "fecha_ocurrencia": fecha_siniestro.isoformat(),
             "hubo_lesionados": resultado.hubo_lesionados,
         },
+        # La traza muestra el dictamen FINAL (el que ve el cliente) y, si un
+        # control del sistema lo cambió, también lo que había dicho el modelo.
         "evidencia": state.get("evidencia", [])
         + [
             {
                 "tipo": "dictamen",
-                "determinacion": resultado.determinacion,
-                "fundamento": resultado.fundamento,
+                "determinacion": determinacion,
+                "fundamento": fundamento,
+                **(
+                    {
+                        "control": control,
+                        "determinacion_modelo": resultado.determinacion,
+                        "fundamento_modelo": resultado.fundamento,
+                    }
+                    if control and determinacion != resultado.determinacion
+                    else {}
+                ),
             }
         ],
     }
@@ -1110,18 +1177,38 @@ def nodo_responder(state: EstadoAgente) -> dict:
                 )
             )
         )
+    # Si se registró un reclamo, su ficha (número, dictamen, motivo y estado)
+    # la arma el código, como en consultar_reclamo, y el modelo escribe solo
+    # los pasos a seguir. Cuando el modelo redactaba todo, a veces daba otro
+    # número de reclamo o enterraba el rechazo de una póliza vencida debajo de
+    # los pasos para tramitar la cobertura.
+    ficha = _ficha_de_la_denuncia(state)
+    if ficha:
+        mensajes.append(SystemMessage(content=PROMPT_PASOS_A_SEGUIR))
     mensajes.extend(state["messages"])
 
-    respuesta = invocar_llm(lambda m: m, mensajes)
-    texto = extraer_texto(respuesta.content).strip()
-    if not texto:
-        # Fallback defensivo: el modelo puede devolver vacío por flakiness o
-        # rate limits. Nunca devolvemos una respuesta vacía al usuario.
-        texto = (
-            "Disculpá, no pude armar una respuesta en este momento. "
-            "¿Podrías reformular tu consulta?"
-        )
-    return {"messages": [AIMessage(content=_con_aviso_de_foto(state, texto))]}
+    texto = _texto_con_reintento(lambda: invocar_llm(lambda m: m, mensajes))
+    if ficha:
+        texto = ficha + (f"\n\n{texto}" if texto else "")
+    return {
+        "messages": [
+            AIMessage(content=_con_aviso_de_foto(state, texto or RESPUESTA_VACIA))
+        ]
+    }
+
+
+def _ficha_de_la_denuncia(state: EstadoAgente) -> str:
+    """La ficha del reclamo recién registrado, armada por el código; "" si no hay."""
+    if not (state.get("siniestro_registrado") and state.get("reclamo")):
+        return ""
+    datos = database.obtener_reclamo(state["reclamo"])
+    if not datos:
+        return ""
+    ficha = "Registré tu denuncia.\n\n" + database.formatear_reclamo(datos, markdown=True)
+    registro = state["siniestro_registrado"]
+    if "ALERTA" in registro:
+        ficha = f"⚠️ **{registro[registro.index('ALERTA'):].strip()}**\n\n{ficha}"
+    return ficha
 
 
 def nodo_compactar(state: EstadoAgente) -> dict:
@@ -1185,23 +1272,22 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
         for palabra in ("reclamo", "claim")
         for texto in (mensaje, reescrita)
     )
-    if menciona_reclamo and state.get("reclamo"):
+    # "¿Qué reclamos tengo?" pide la lista, no el último reclamo: va al ReAct,
+    # que tiene la herramienta listar_reclamos.
+    pide_lista = any("reclamos" in texto for texto in (mensaje, reescrita))
+    if menciona_reclamo and not pide_lista and state.get("reclamo"):
         return "consultar_reclamo"
-    # DNI o preguntas abiertas -> subagente ReAct (decide qué herramienta usar).
-    if extraer_dni(mensaje) and not extraer_patente(mensaje):
-        return "agente_react"
-    if extraer_patente(mensaje):
-        return "consultar_poliza"
 
-    # Intención del LLM (con valores persistidos como respaldo).
-    if intencion == "charla":
+    # Siniestro: camino determinístico (dictamen y registro auditables).
+    if intencion == "siniestro":
+        return "consultar_poliza" if state.get("patente") else "pedir_patente"
+    # Charla sin datos: se responde sin herramientas.
+    tiene_datos = extraer_patente(mensaje) or extraer_dni(mensaje)
+    if intencion == "charla" and not tiene_datos:
         return "responder"
-    if intencion == "general":
-        return "agente_react"
-    if state.get("patente"):
-        # consulta/siniestro con patente (actual o recordada en la conversación).
-        return "consultar_poliza"
-    if intencion == "consulta" and state.get("dni"):
+    # Preguntas abiertas y consultas sobre la póliza, los reclamos o cuánto
+    # paga: el subagente ReAct decide qué herramienta usar.
+    if intencion == "general" or state.get("patente") or state.get("dni"):
         return "agente_react"
     return "pedir_patente"
 

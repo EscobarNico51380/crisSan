@@ -109,6 +109,13 @@ def render_evidencia(evidencia: list[dict]) -> None:
                         f"- **{e.get('determinacion', '?')}** — "
                         f"{e.get('fundamento', '')}"
                     )
+                    if e.get("control"):
+                        # El código corrigió al modelo: se muestran las dos cosas.
+                        st.markdown(
+                            f"  - El modelo había dicho **{e['determinacion_modelo']}** "
+                            f"({e.get('fundamento_modelo', '')}). Lo cambió un "
+                            f"control del sistema: {e['control']}."
+                        )
             if derivaciones:
                 st.markdown("**Derivación a un asesor:**")
                 for e in derivaciones:

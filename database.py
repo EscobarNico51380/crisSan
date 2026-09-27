@@ -506,6 +506,102 @@ def consultar_estado_reclamo(numero_reclamo: str) -> str:
     return formatear_reclamo(datos)
 
 
+def listar_reclamos(patente: str = "", dni: str = "") -> str:
+    """Lista los reclamos de un vehículo (por patente) o de un titular (por DNI).
+
+    Una línea por reclamo, del más reciente al más viejo: número, vehículo,
+    fecha del hecho, tipo, dictamen y estado. El detalle de cada uno se ve
+    con ``consultar_estado_reclamo``.
+    """
+    patente = patente.strip().upper()
+    dni = dni.strip()
+    if not patente and not dni:
+        return "Hace falta la patente del vehículo o el DNI del titular."
+    campo, valor = ("p.patente", patente) if patente else ("p.dni_titular", dni)
+    conn = get_conn()
+    filas = conn.execute(
+        f"""
+        SELECT s.id_siniestro, s.fecha_ocurrencia, s.tipo_siniestro,
+               s.dictamen_ia, s.estado_reclamo, p.patente, v.marca, v.modelo
+        FROM siniestros s
+        JOIN polizas p ON s.numero_poliza = p.numero_poliza
+        JOIN vehiculos v ON p.patente = v.patente
+        WHERE {campo} = ?
+        ORDER BY s.id_siniestro DESC
+        """,
+        (valor,),
+    ).fetchall()
+    conn.close()
+    quien = f"la patente {patente}" if patente else f"el DNI {dni}"
+    if not filas:
+        return f"No hay reclamos registrados para {quien}."
+    titulo = f"de la patente {patente}" if patente else f"del DNI {dni}"
+    lineas = [f"Reclamos {titulo} ({len(filas)}):"]
+    for f in filas:
+        lineas.append(
+            f"- #{f['id_siniestro']} | {f['marca']} {f['modelo']} ({f['patente']}) | "
+            f"{f['tipo_siniestro']}, ocurrido el {_fecha_legible(f['fecha_ocurrencia'])} | "
+            f"Dictamen: {f['dictamen_ia']} | Estado: {f['estado_reclamo']}"
+        )
+    return "\n".join(lineas)
+
+
+def _pesos(monto: float) -> str:
+    """800000 -> '$800.000' (formato argentino, sin centavos)."""
+    return "$" + f"{monto:,.0f}".replace(",", ".")
+
+
+def calcular_pago_cliente(patente: str, costo_reparacion: float) -> str:
+    """Reparte el costo de una reparación entre el cliente y la aseguradora.
+
+    Con franquicia fija, el cliente paga hasta el valor de la franquicia y la
+    aseguradora el resto, con tope en la suma asegurada. Es una cuenta: la
+    hace el código, no el modelo. Supone que el daño está cubierto; si la
+    póliza no está al día, lo avisa.
+    """
+    patente = patente.strip().upper()
+    if costo_reparacion <= 0:
+        return "El costo de la reparación tiene que ser un monto mayor que cero."
+    conn = get_conn()
+    fila = conn.execute(
+        """
+        SELECT numero_poliza, producto, suma_asegurada, tipo_franquicia,
+               valor_franquicia, estado_pago, fecha_vencimiento
+        FROM polizas WHERE patente = ?
+        """,
+        (patente,),
+    ).fetchone()
+    conn.close()
+    if not fila:
+        return f"No se encontró ninguna póliza asociada a la patente '{patente}'."
+
+    franquicia = fila["valor_franquicia"] or 0.0
+    paga_cliente = min(costo_reparacion, franquicia)
+    paga_aseguradora = min(costo_reparacion - paga_cliente, fila["suma_asegurada"])
+    paga_cliente = costo_reparacion - paga_aseguradora
+
+    lineas = [
+        f"Póliza {fila['numero_poliza']} (producto {fila['producto']}), patente {patente}",
+        f"Costo de la reparación: {_pesos(costo_reparacion)}",
+        f"Franquicia: {fila['tipo_franquicia']} ({_pesos(franquicia)})",
+        f"Paga el cliente: {_pesos(paga_cliente)}",
+        f"Paga la aseguradora: {_pesos(paga_aseguradora)}",
+        "El cálculo supone que el daño está cubierto por el plan de la póliza. "
+        "Si el plan no lo cubre, la reparación la paga toda el cliente.",
+    ]
+    if fila["fecha_vencimiento"] < datetime.now().strftime("%Y-%m-%d"):
+        lineas.append(
+            f"ATENCIÓN: la póliza venció el {_fecha_legible(fila['fecha_vencimiento'])}. "
+            "Sin la póliza vigente no hay cobertura."
+        )
+    if fila["estado_pago"].strip().lower() != "al dia":
+        lineas.append(
+            f"ATENCIÓN: la póliza tiene el pago pendiente ({fila['estado_pago']}). "
+            "Sin el pago al día no hay cobertura."
+        )
+    return "\n".join(lineas)
+
+
 def vehiculo_tiene_gnc(patente: str) -> bool:
     """Indica si el vehículo de esa patente está adaptado para GNC.
 

@@ -2,13 +2,13 @@
 
 Verifica, sobre el agente real, que:
 
-1. En preguntas abiertas (general, DNI), el LLM **decide** qué herramienta de
-   lectura usar (patrón ReAct): la traza muestra una `decision` con herramienta
-   y argumentos.
+1. En las consultas (general, DNI, patente, reclamos, cuánto paga), el LLM
+   **decide** qué herramienta de lectura usar (patrón ReAct): la traza muestra
+   una `decision` con herramienta y argumentos.
 2. La traza (`evidencia`) registra la `observacion` (resultado de la tool).
-3. Las consultas por patente y los siniestros van por el camino
-   **determinístico** y también dejan traza (`consultar_datos_poliza`,
-   `consultar_clausulas_poliza`, `dictamen`, `registrar_siniestro`).
+3. Los siniestros van por el camino **determinístico** y también dejan traza
+   (`consultar_datos_poliza`, `consultar_clausulas_poliza`, `dictamen`,
+   `registrar_siniestro`).
 4. La herramienta de escritura NO está expuesta al subagente ReAct.
 
 Uso:
@@ -29,12 +29,14 @@ database.inicializar_base()
 
 # (descripción, mensaje, camino esperado)
 #   react_con_tool  -> el LLM debe decidir llamar al menos una herramienta
-#   deterministico  -> consulta por patente (camino explícito, sin ReAct)
+#   react:<tool>    -> el LLM debe decidir llamar ESA herramienta
 #   deterministico_siniestro -> dictamen + registro por el camino explícito
 CASOS = [
     ("react: pregunta general", "¿Qué es la franquicia?", "react_con_tool"),
     ("react: pólizas por DNI", "Quiero ver mis pólizas, mi DNI es 39123456", "react_con_tool"),
-    ("deterministico: consulta por patente", "¿Qué plan tengo para la patente AB123CD?", "deterministico"),
+    ("react: consulta por patente", "¿Qué plan tengo para la patente AB123CD?", "react:consultar_datos_poliza"),
+    ("react: listar reclamos", "¿Qué reclamos tiene la AB123CD?", "react:listar_reclamos"),
+    ("react: cuánto paga", "Si arreglar la puerta de la AB123CD sale 800.000 pesos, ¿cuánto pago yo?", "react:calcular_pago_cliente"),
     ("deterministico: siniestro", "Me cayó granizo sobre la AF987XX, ¿me cubre?", "deterministico_siniestro"),
 ]
 
@@ -78,10 +80,14 @@ def main() -> None:
                 if "decision" not in tipos:
                     errores += 1
                     print("    [!] esperaba una 'decision' del LLM y no la hubo")
-            elif camino == "deterministico":
-                if "consultar_datos_poliza" not in herramientas:
+            elif camino.startswith("react:"):
+                esperada = camino.split(":", 1)[1]
+                decididas = {
+                    e.get("herramienta") for e in evidencia if e.get("tipo") == "decision"
+                }
+                if esperada not in decididas:
                     errores += 1
-                    print("    [!] esperaba consultar_datos_poliza en la traza")
+                    print(f"    [!] esperaba que el LLM decidiera llamar {esperada}")
             else:
                 # El siniestro va por el camino explícito: póliza + cláusulas.
                 # (Si el hecho ya estaba denunciado, el grafo muestra el reclamo
