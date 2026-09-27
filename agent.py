@@ -188,6 +188,9 @@ CONSULTA_EXCLUSIONES_GNC = (
 )
 CLAVES_GNC = ("gnc", "gas natural comprimido")
 
+# Contacto de la línea de información del manual (pág. 20/27).
+CONTACTO_CONSULTAS = "0810-222-8887"
+
 
 # ---------------------------------------------------------------------------
 # Estado del grafo
@@ -321,7 +324,9 @@ PROMPT_CLASIFICAR = (
     "Clasificá el mensaje en UNA de estas intenciones:\n"
     "- 'consulta': pregunta o da datos de SU póliza (patente o DNI).\n"
     "- 'siniestro': reporta un hecho ocurrido (choque, robo, incendio, granizo, vuelco).\n"
-    "- 'general': pregunta genérica sobre el manual/coberturas, sin su póliza.\n"
+    "- 'general': pregunta genérica sobre el manual/coberturas sin su póliza, O "
+    "sobre un trámite o procedimiento (avanzar o apurar un reclamo, apelar, dar "
+    "de baja, cambiar de plan, cuánto tarda).\n"
     "- 'charla': saludo, agradecimiento o texto trivial.\n"
     "Regla: si menciona patente o DNI → 'consulta' (salvo que reporte un hecho → 'siniestro').\n"
     "Si hay HISTORIAL RECIENTE, usalo para entender a qué se refiere el mensaje "
@@ -457,7 +462,12 @@ PROMPT_REACT = (
     "adivinar.\n"
     "4. Si el usuario describe un siniestro para denunciar, explicá que podés "
     "tomar la denuncia indicando la patente del vehículo.\n"
-    "5. Español rioplatense, claro y directo. Sin muletillas iniciales.\n"
+    "5. Si la pregunta es sobre un trámite o procedimiento que no podés "
+    "gestionar (avanzar o apurar un reclamo, apelar, dar de baja, cuánto "
+    "tarda), decilo con honestidad: no muestres la ficha del reclamo como si "
+    "respondiera. Ofrecé contactar a un asesor de San Cristóbal al "
+    f"{CONTACTO_CONSULTAS} o, si quiere, consultar el estado de su reclamo.\n"
+    "6. Español rioplatense, claro y directo. Sin muletillas iniciales.\n"
 )
 
 # Subagente ReAct: el LLM decide qué herramienta de lectura invocar. Se crea
@@ -1034,10 +1044,6 @@ def nodo_registrar(state: EstadoAgente) -> dict:
     }
 
 
-# Contacto de la línea de información del manual (pág. 20/27).
-CONTACTO_CONSULTAS = "0810-222-8887"
-
-
 def nodo_derivar_humano(state: EstadoAgente) -> dict:
     """Hecho que no coincide con ninguna cobertura del manual → derivar a un asesor.
 
@@ -1176,9 +1182,17 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
     intencion = state["intencion"]
     mensaje = state["messages"][-1].content.lower()
 
-    # Señales EXPLÍCITAS del mensaje actual (determinísticas, máxima prioridad).
-    # Para el reclamo se mira también la pregunta reescrita por el clasificador:
-    # en "¿y por qué me lo aprobaron?" la palabra "reclamo" solo aparece ahí.
+    # Intención del LLM. 'general' va ANTES que la heurística de "reclamo": una
+    # pregunta de trámite ("¿cómo avanzo mi reclamo?") se clasifica 'general' y
+    # debe ir al subagente ReAct, no a mostrar la ficha del reclamo.
+    if intencion == "charla":
+        return "responder"
+    if intencion == "general":
+        return "agente_react"
+
+    # Señales EXPLÍCITAS del mensaje actual (determinísticas). Para el reclamo
+    # se mira también la pregunta reescrita por el clasificador: en
+    # "¿y por qué me lo aprobaron?" la palabra "reclamo" solo aparece ahí.
     reescrita = (state.get("consulta") or "").lower()
     menciona_reclamo = any(
         palabra in texto
@@ -1194,10 +1208,6 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
         return "consultar_poliza"
 
     # Intención del LLM (con valores persistidos como respaldo).
-    if intencion == "charla":
-        return "responder"
-    if intencion == "general":
-        return "agente_react"
     if state.get("patente"):
         # consulta/siniestro con patente (actual o recordada en la conversación).
         return "consultar_poliza"
