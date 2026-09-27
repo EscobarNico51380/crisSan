@@ -77,6 +77,76 @@ def cargar_agente():
     return agente
 
 
+def render_evidencia(evidencia: list[dict]) -> None:
+    """Muestra la traza observable del turno.
+
+    Dos pestañas: el razonamiento (decisiones y dictamen) y las herramientas
+    efectivamente llamadas con sus argumentos y resultados. No expone el
+    razonamiento interno del modelo — solo lo verificable.
+    """
+    if not evidencia:
+        return
+    with st.expander("🔍 Cómo llegué a esto"):
+        tab_raz, tab_tools, tab_fuentes = st.tabs(
+            ["🧠 Razonamiento", "🔧 Herramientas", "📄 Fuentes"]
+        )
+
+        with tab_raz:
+            decisiones = [e for e in evidencia if e.get("tipo") == "decision"]
+            dictamenes = [e for e in evidencia if e.get("tipo") == "dictamen"]
+            derivaciones = [e for e in evidencia if e.get("tipo") == "derivacion"]
+            if decisiones:
+                st.markdown("**El modelo decidió llamar:**")
+                for e in decisiones:
+                    st.markdown(
+                        f"- `{e.get('herramienta', '?')}` "
+                        f"con `{e.get('argumentos', {})}`"
+                    )
+            if dictamenes:
+                st.markdown("**Dictamen de cobertura:**")
+                for e in dictamenes:
+                    st.markdown(
+                        f"- **{e.get('determinacion', '?')}** — "
+                        f"{e.get('fundamento', '')}"
+                    )
+            if derivaciones:
+                st.markdown("**Derivación a un asesor:**")
+                for e in derivaciones:
+                    st.markdown(f"- {e.get('motivo', '')}")
+            if not decisiones and not dictamenes and not derivaciones:
+                st.caption("Sin decisiones de herramientas en este turno.")
+
+        with tab_tools:
+            llamadas = [
+                e for e in evidencia if e.get("tipo") in ("tool", "observacion")
+            ]
+            if llamadas:
+                for e in llamadas:
+                    with st.container(border=True):
+                        st.markdown(f"**`{e.get('herramienta', '?')}`**")
+                        if e.get("argumentos"):
+                            st.caption(f"Argumentos: {e['argumentos']}")
+                        st.code(str(e.get("resultado", ""))[:1500], language="text")
+            else:
+                st.caption("No se llamaron herramientas en este turno.")
+
+        with tab_fuentes:
+            # Chunks recuperados del manual (RAG). Aplica tanto al camino ReAct
+            # (observacion) como al determinístico (tool). Cada chunk muestra su
+            # sección, página y similitud coseno.
+            fuentes = [
+                e
+                for e in evidencia
+                if e.get("herramienta") == "consultar_clausulas_poliza"
+                and e.get("resultado")
+            ]
+            if fuentes:
+                for e in fuentes:
+                    st.code(str(e.get("resultado", ""))[:3000], language="text")
+            else:
+                st.caption("No se consultó el manual en este turno.")
+
+
 # ---------------------------------------------------------------------------
 # Estado de sesión (persiste entre reruns)
 # ---------------------------------------------------------------------------
@@ -147,12 +217,14 @@ if not GROQ_API_KEY:
 
 agente = cargar_agente()
 
-# Mostramos el historial de la conversación.
+# Mostramos el historial de la conversación (con su traza).
 for mensaje in st.session_state.messages:
     with st.chat_message(mensaje["role"]):
         if mensaje.get("foto"):
             st.image(mensaje["foto"], width=320)
         st.markdown(mensaje["content"])
+        if mensaje.get("evidencia"):
+            render_evidencia(mensaje["evidencia"])
         if mensaje.get("costo"):
             st.caption(mensaje["costo"])
 
@@ -201,12 +273,14 @@ if prompt:
                     },
                 )
                 respuesta = resultado["messages"][-1].content
+                evidencia = resultado.get("evidencia", [])
             except Exception as e:  # noqa: BLE001
                 from agent import mensaje_para_el_usuario
 
                 # El detalle técnico va a la terminal; al chat, un mensaje amigable.
                 print(f"[error] {type(e).__name__}: {e}")
                 respuesta = mensaje_para_el_usuario(e)
+                evidencia = []
 
         consumo = costos.consumo_de(contador.usage_metadata)
         st.session_state.consumo_total = st.session_state.consumo_total + consumo
@@ -223,10 +297,16 @@ if prompt:
             )
 
         st.markdown(respuesta)
+        render_evidencia(evidencia)
         st.caption(costo_turno)
 
     st.session_state.messages.append(
-        {"role": "assistant", "content": respuesta, "costo": costo_turno}
+        {
+            "role": "assistant",
+            "content": respuesta,
+            "evidencia": evidencia,
+            "costo": costo_turno,
+        }
     )
 
 costo_total.markdown(costos.formatear(st.session_state.consumo_total))

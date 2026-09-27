@@ -303,8 +303,8 @@ def _obtener_chunks() -> list[Document]:
 SEPARADOR_FRAGMENTOS = "\n\n---\n\n"
 
 
-def buscar_clausulas(consulta: str, k: int = 6) -> str:
-    """Busca cláusulas relevantes con RETRIEVAL HÍBRIDO y las devuelve formateadas.
+def buscar_clausulas_con_evidencia(consulta: str, k: int = 6) -> dict:
+    """Busca cláusulas con RETRIEVAL HÍBRIDO y devuelve texto + evidencia.
 
     Combina:
       1. BM25 (matching léxico): captura términos exactos como "granizo" que
@@ -313,6 +313,10 @@ def buscar_clausulas(consulta: str, k: int = 6) -> str:
 
     Se fusionan con EnsembleRetriever (RRF). Busca en TODO el manual (sin
     filtro duro por producto) y devuelve cada chunk con su tag de sección.
+
+    Devuelve ``{"texto": str, "chunks": list[dict]}``. La evidencia incluye, por
+    chunk: sección, página, similitud coseno (si lo recuperó la búsqueda
+    vectorial) y un preview — para que la UI muestre DE DÓNDE salió la respuesta.
     """
     from langchain_classic.retrievers import EnsembleRetriever  # lazy
     from langchain_community.retrievers import BM25Retriever  # lazy
@@ -322,6 +326,13 @@ def buscar_clausulas(consulta: str, k: int = 6) -> str:
 
     retriever_bm25 = BM25Retriever.from_documents(chunks, preprocess_func=_tokenizar)
     retriever_bm25.k = k
+
+    # Búsqueda vectorial CON score. En espacio coseno, menor distancia = más
+    # parecido; exponemos similitud = 1 - distancia (1.0 = idéntico).
+    pares_vector = store.similarity_search_with_score(consulta, k=k)
+    similitud_por_texto = {d.page_content: 1.0 - s for d, s in pares_vector}
+    recuperados_vector = {d.page_content for d, _ in pares_vector}
+
     retriever_vector = store.as_retriever(
         search_type="similarity",
         search_kwargs={"k": k},
@@ -332,16 +343,39 @@ def buscar_clausulas(consulta: str, k: int = 6) -> str:
     )
     docs = ensemble.invoke(consulta)
     if not docs:
-        return "No se encontraron cláusulas relevantes para esa consulta."
+        return {
+            "texto": "No se encontraron cláusulas relevantes para esa consulta.",
+            "chunks": [],
+        }
 
     partes = []
+    evidencia = []
     for doc in docs:
         seccion = doc.metadata.get("seccion", "Sin sección")
         pagina = doc.metadata.get("page", "?")
-        partes.append(
-            f"[Sección: {seccion} | Pág: {pagina}]\n{doc.page_content.strip()}"
+        contenido = doc.page_content.strip()
+        similitud = similitud_por_texto.get(doc.page_content)
+        etiqueta_score = (
+            f" | similitud: {similitud:.3f}" if similitud is not None else " | solo BM25"
         )
-    return SEPARADOR_FRAGMENTOS.join(partes)
+        partes.append(
+            f"[Sección: {seccion} | Pág: {pagina}{etiqueta_score}]\n{contenido}"
+        )
+        evidencia.append(
+            {
+                "seccion": seccion,
+                "pagina": pagina,
+                "similitud": round(similitud, 4) if similitud is not None else None,
+                "recuperado_por_vector": doc.page_content in recuperados_vector,
+                "preview": contenido[:200],
+            }
+        )
+    return {"texto": SEPARADOR_FRAGMENTOS.join(partes), "chunks": evidencia}
+
+
+def buscar_clausulas(consulta: str, k: int = 6) -> str:
+    """Wrapper: devuelve solo el texto formateado (interfaz de la tool)."""
+    return buscar_clausulas_con_evidencia(consulta, k)["texto"]
 
 
 def buscar_exclusiones(consulta: str, claves: tuple[str, ...]) -> str:

@@ -87,3 +87,17 @@ def consultar_polizas_por_dni(dni: str) -> str:
 def consultar_estado_reclamo(numero_reclamo: str) -> str:
     """Consulta el estado y dictamen de un reclamo por su número."""
     return database.consultar_estado_reclamo(numero_reclamo)
+
+
+# ---------------------------------------------------------------------------
+# Herramientas expuestas al subagente ReAct
+# ---------------------------------------------------------------------------
+# SOLO LECTURA. Las herramientas con efectos secundarios (registrar_siniestro)
+# NO se le entregan al LLM: quedan reservadas al camino determinístico, para no
+# arriesgar registros duplicados ni decisiones de cobertura no auditables.
+HERRAMIENTAS_LECTURA = [
+    consultar_datos_poliza,
+    consultar_clausulas_poliza,
+    consultar_polizas_por_dni,
+    consultar_estado_reclamo,
+]
