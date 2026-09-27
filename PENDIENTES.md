@@ -53,11 +53,12 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
 | Elegir el modelo desde la web (el otro queda de respaldo) | ✅ | `7e986c3` |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | 🔶 Casi | `llm.py` ya crea los modelos con `make_llm` y los nombres están en `config.py`. Falta poder elegir otro proveedor (OpenAI, Ollama) |
-| Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ⏳ Nicolás lo tiene empezado, sin subir | Lo que más suma en "aplicación del marco teórico". Falta decidir qué preguntas pasan por ahí. Criterio para las herramientas: pocas, bien descritas y sin superponerse, porque cada una se describe en el prompt en cada consulta y con más opciones el modelo se equivoca más al elegir |
+| Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ✅ Integrado (rama `integracion-react`) | El subagente ReAct resuelve las preguntas abiertas (`general`, DNI). El camino del dictamen sigue determinístico. **Pendiente de decidir:** si también querés que pase por ReAct la consulta por patente (riesgo: se pierde el control de exclusiones por GNC que hace `nodo_consultar_clausulas`) |
 | Herramienta nueva: listar los reclamos de un cliente ("¿qué reclamos tengo?") | ⏳ | Hoy no se puede responder sin el número de reclamo. Conviene sumarla junto con el ReAct |
 | Herramienta nueva: pedir una grúa o asistencia | ⏳ | Estaba en el diseño original (`IdeaTP.md`, `pedir_grua`) y nunca se hizo. Simulada, como el resto de los datos |
 | Herramienta nueva: calcular cuánto paga el cliente (costo de la reparación menos la franquicia) | ⏳ | Es una cuenta: la hace el código, no el modelo. Como la calculadora del notebook de agentes de la cátedra |
-| Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ⏳ | Es la "traza observable" del notebook de agentes. Luce mucho en el video |
+| Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ✅ | Pestaña "🔍 Cómo llegué a esto" (Razonamiento / Herramientas / Fuentes) en el chat. `rag.buscar_clausulas_con_evidencia` devuelve los chunks con sección, página y similitud coseno |
+| Fijar el tipo de siniestro a los del manual, y derivar a un asesor si no coincide | ✅ | `DictamenSiniestro.tipo_siniestro` es un `Literal` con los 11 tipos del manual + `No reconocido`; en ese caso `nodo_derivar_humano` deriva al 0810-222-8887 y no registra |
 | Interpretar imágenes enviadas por el cliente | ✅ Una foto por mensaje en la web; el modelo de visión describe y el dictamen la usa como evidencia | `9f7e9c3` |
 | Probar los dictámenes con foto con el modelo principal | 🔶 | 6 casos bien con el principal el 25/09 (ver `DOCUMENTACION.md`). Faltan el choque con relato de granizo (paso 12 del recorrido) y el parabrisas del auto con GNC, que los respondió el respaldo |
 | Probar con fotos propias del grupo | ⏳ | Las de ejemplo son de Wikimedia Commons |
@@ -116,15 +117,15 @@ Análisis de Nicolás, con los estados actualizados. Los notebooks, pasados a
 
 | Requisito | Estado |
 |---|---|
-| `create_agent`: el modelo decide si responder o llamar una herramienta (ReAct) | ❌ |
+| `create_agent`: el modelo decide si responder o llamar una herramienta (ReAct) | ✅ |
 | Herramientas con `@tool` (descripción desde el docstring, esquema desde los tipos) | ✅ |
 | Herramientas verificadas localmente, sin LLM | ⚠️ Se prueban a través del agente |
-| Backend separado, modelo intercambiable (`make_llm`) | ⚠️ `make_llm` y selector de modelo en la web; falta otro proveedor |
+| Backend separado, modelo intercambiable (`make_llm`) | ⚠️ `llm.make_llm` crea todos los modelos; falta soportar otro proveedor (OpenAI/Ollama) |
 | Prompt de sistema con rol y reglas | ✅ |
 | Memoria con checkpointer + `thread_id` | ✅ |
-| Traza observable: herramienta, argumentos, resultado | ❌ |
+| Traza observable: herramienta, argumentos, resultado | ✅ |
 | `recursion_limit` en la consulta | ⚠️ |
-| Modelo con soporte de *tool calling* | ⚠️ `gpt-oss-120b` lo soporta, pero hoy no se usa |
+| Modelo con soporte de *tool calling* | ✅ Lo usa el subagente ReAct |
 
 ### Memoria y RAG (`nlp_3_langchain_conversaciones_rag_v2`)
 
@@ -139,7 +140,7 @@ Análisis de Nicolás, con los estados actualizados. Los notebooks, pasados a
 | Embeddings + Chroma persistente | ✅ |
 | Retriever con `k` configurable | ✅ Mejorado: búsqueda híbrida (BM25 + semántica) |
 | Pregunta reformulada con el historial antes de buscar (*history-aware*) | ✅ Lo hace el clasificador en la misma llamada (`881329f`) |
-| Mostrar las fuentes y los puntajes de la búsqueda | ❌ |
+| Mostrar las fuentes y los puntajes de la búsqueda | ✅ Pestaña Fuentes + similitud coseno por chunk |
 | Reintentos con espera creciente ante errores temporales | ✅ |
 
 ### Conceptos (`nlp_1_conceptos`)
@@ -149,9 +150,9 @@ Análisis de Nicolás, con los estados actualizados. Los notebooks, pasados a
 | LCEL (`prompt \| modelo \| parser`) | ⚠️ Opcional |
 | Revisar deprecaciones y actualizar imports | ⚠️ `Chroma` se deja así por decisión del grupo |
 | Tokenización y lematización con NLTK, TF-IDF con Naive Bayes | — Concepto de clase, no requisito del agente |
-| Agente de juguete que decide la herramienta y muestra su traza | ❌ Se cubre con la traza observable |
+| Agente de juguete que decide la herramienta y muestra su traza | ✅ Se cubre con el subagente ReAct y la traza observable |
 
-**Resumen:** 11 cumplidos · 7 parciales · 5 faltantes.
+**Resumen:** 16 cumplidos · 6 parciales · 1 faltante.
 
 ---
 

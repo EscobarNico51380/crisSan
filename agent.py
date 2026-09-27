@@ -1,20 +1,24 @@
-"""Agente conversacional basado en un grafo de estado de LangGraph.
+"""Agente conversacional con arquitectura HÍBRIDA sobre LangGraph.
 
-El flujo está controlado de forma EXPLÍCITA (no es un ReAct a ciegas):
+Combina dos caminos según la intención del usuario:
 
-    START
-      -> clasificar (LLM: intención + patente)
-            |-- "charla"  -> responder -> END
-            |-- "general" -> consultar_clausulas -> responder -> END
-            |-- "consulta"/"siniestro" sin patente -> pedir_patente -> END
-            |-- "consulta"  -> consultar_poliza -> consultar_clausulas
-                                   -> responder -> END
-            |-- "siniestro" -> consultar_poliza -> consultar_clausulas
-                                   -> emitir_dictamen -> registrar
-                                   -> responder -> END
+1. CAMINO DETERMINÍSTICO (siniestros): la cobertura y el registro exigen
+   auditabilidad, así que el flujo es explícito y NO lo decide el LLM.
 
-La memoria conversacional se logra con el checkpointer (MemorySaver) y un
-thread_id por sesión: el historial vive en el estado ``messages``.
+       clasificar -> consultar_poliza -> consultar_clausulas -> emitir_dictamen
+                  -> registrar -> responder -> END
+                  (o, si el tipo de siniestro no está en el manual)
+                  -> derivar_humano -> END
+
+2. CAMINO ReAct (consulta / general / charla): un subagente creado con
+   ``create_agent`` recibe las herramientas de LECTURA y decide por sí mismo
+   cuál invocar (patrón ReAct: decidir -> actuar -> observar -> responder).
+
+       clasificar -> agente_react -> END
+
+La memoria conversacional usa el checkpointer (MemorySaver) + thread_id: el
+historial vive en ``messages``. La traza observable de cada turno (decisiones,
+herramientas, argumentos y observaciones) se acumula en ``evidencia``.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import re
 from datetime import date
 from typing import Annotated, Literal, Optional, TypedDict
 
+from langchain.agents import create_agent
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -49,9 +54,9 @@ from config import (
 )
 from rag import buscar_exclusiones
 from tools import (
+    HERRAMIENTAS_LECTURA,
     consultar_clausulas_poliza,
     consultar_datos_poliza,
-    consultar_polizas_por_dni,
     consultar_siniestros_previos,
     registrar_siniestro,
 )
@@ -206,6 +211,7 @@ class EstadoAgente(TypedDict):
     descripcion_foto: str  # lo que describió el modelo de visión
     patente_foto: str  # patente que se lee en la foto, si se ve
     aviso_foto: str  # aviso si la foto no se pudo analizar
+    evidencia: list[dict]  # traza del turno: decisiones, tools y observaciones
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +246,27 @@ class AnalisisEntrada(BaseModel):
     )
 
 
+# Tipos de siniestro tomados de la LISTA NUMERADA del manual de coberturas
+# (secciones 1 a 13). Se excluyen "Reposición 0 km" (11) y "Gastos por baja del
+# vehículo" (12): no son hechos que el usuario reporta, sino prestaciones que
+# derivan de una pérdida total. "No reconocido" es el centinela para un hecho
+# que no coincide con ninguna cobertura del manual (→ se deriva a un asesor).
+TIPOS_SINIESTRO = (
+    "Responsabilidad Civil",   # 1) daños a terceros
+    "Robo o Hurto Total",      # 2)
+    "Incendio Total",          # 3)
+    "Destrucción Total",       # 4) vuelco, despeñamiento, inmersión, choque total
+    "Incendio Parcial",        # 5)
+    "Robo o Hurto Parcial",    # 6)
+    "Cristales y Cerraduras",  # 7)
+    "Parabrisas y Luneta",     # 8)
+    "Reposición de Ruedas",    # 9) robo o hurto de ruedas
+    "Granizo",                 # 10)
+    "Accidente Parcial",       # 13)
+    "No reconocido",           # centinela: sin cobertura en el manual
+)
+
+
 class DictamenSiniestro(BaseModel):
     """Determinación de cobertura + datos del siniestro para registrar."""
 
@@ -247,8 +274,11 @@ class DictamenSiniestro(BaseModel):
         "Cubierto", "Rechazado", "Requiere peritaje", "Asistencia 24"
     ] = Field(description="Determinación de si el seguro cubre o no el siniestro")
     fundamento: str = Field(description="Justificación basada en póliza y cláusulas")
-    tipo_siniestro: str = Field(
-        description="Ej: Accidente, Robo Total, Granizo, Incendio"
+    tipo_siniestro: Literal[*TIPOS_SINIESTRO] = Field(
+        description=(
+            "Tipo de siniestro según las coberturas del manual. Usá "
+            "'No reconocido' si el hecho no coincide con NINGUNA de las demás."
+        )
     )
     fecha_ocurrencia: str = Field(
         description="Fecha en formato YYYY-MM-DD (hoy si no se aclara)"
@@ -389,6 +419,12 @@ PROMPT_DICTAMEN = (
     "6. Si hay FOTO DEL CLIENTE: usala como evidencia del daño; si no deja ver "
     "bien el daño, basate en el relato. La descripción es automática y puede "
     "tener errores: no rechaces solo por ella.\n\n"
+    "TIPOS DE SINIESTRO VÁLIDOS (tomados del manual): "
+    + ", ".join(TIPOS_SINIESTRO)
+    + ".\n"
+    "Si el hecho relatado NO coincide con NINGUNO de esos tipos, usá "
+    "'No reconocido' como tipo_siniestro y 'Requiere peritaje' como "
+    "determinación. NO inventes un tipo nuevo.\n\n"
     "Básate en: la póliza, las cláusulas recuperadas, las exclusiones y las "
     "resoluciones previas (referencia, no regla rígida)."
 )
@@ -406,6 +442,77 @@ PROMPT_RESUMEN = (
     "No inventes nada que no esté en el texto. Máximo 120 palabras, en tercera "
     "persona, sin encabezados."
 )
+
+# Prompt del subagente ReAct (camino de consulta / general / charla).
+PROMPT_REACT = (
+    "Sos 'San Cris', el asistente virtual de seguros San Cristóbal.\n"
+    "Tenés herramientas de SOLO LECTURA para consultar pólizas, cláusulas del "
+    "manual, pólizas por DNI y el estado de un reclamo.\n"
+    "Reglas:\n"
+    "1. Elegí la herramienta que corresponda a la pregunta. Si necesitás más "
+    "de un dato, podés llamar varias herramientas en secuencia.\n"
+    "2. Usá SOLO la información que devuelven las herramientas. No inventes "
+    "coberturas, montos, emails, teléfonos, portales ni procedimientos.\n"
+    "3. Si falta un dato (patente, DNI o número de reclamo), pedilo en vez de "
+    "adivinar.\n"
+    "4. Si el usuario describe un siniestro para denunciar, explicá que podés "
+    "tomar la denuncia indicando la patente del vehículo.\n"
+    "5. Español rioplatense, claro y directo. Sin muletillas iniciales.\n"
+)
+
+# Subagente ReAct: el LLM decide qué herramienta de lectura invocar. Se crea
+# DENTRO de ``nodo_agente_react`` con el modelo que tenga cupo (``llm.invocar``),
+# así respeta el respaldo, el disyuntor y el selector de modelo de la web. NO
+# lleva checkpointer propio: la memoria la administra el grafo externo (así no
+# se duplica el historial).
+def construir_react(modelo):
+    """Crea el subagente ReAct con el modelo dado (lo usa ``llm.invocar``)."""
+    return create_agent(
+        model=modelo,
+        tools=HERRAMIENTAS_LECTURA,
+        system_prompt=PROMPT_REACT,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Traza observable (evidencia)
+# ---------------------------------------------------------------------------
+def _evidencia_tool(herramienta: str, argumentos: dict, resultado: str) -> dict:
+    """Entrada de traza para una tool llamada de forma determinística."""
+    return {
+        "tipo": "tool",
+        "herramienta": herramienta,
+        "argumentos": argumentos,
+        "resultado": resultado,
+    }
+
+
+def _extraer_traza(mensajes: list[AnyMessage]) -> list[dict]:
+    """Convierte los mensajes del subagente ReAct en una traza legible.
+
+    Extrae lo OBSERVABLE: qué herramienta decidió llamar el modelo, con qué
+    argumentos, y qué devolvió cada herramienta. No pretende exponer el
+    razonamiento interno del modelo (que no es accesible ni verificable).
+    """
+    traza: list[dict] = []
+    for mensaje in mensajes:
+        for llamada in getattr(mensaje, "tool_calls", None) or []:
+            traza.append(
+                {
+                    "tipo": "decision",
+                    "herramienta": llamada.get("name", ""),
+                    "argumentos": llamada.get("args", {}),
+                }
+            )
+        if getattr(mensaje, "type", None) == "tool":
+            traza.append(
+                {
+                    "tipo": "observacion",
+                    "herramienta": getattr(mensaje, "name", ""),
+                    "resultado": extraer_texto(mensaje.content),
+                }
+            )
+    return traza
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +644,7 @@ def nodo_clasificar(state: EstadoAgente) -> dict:
         "reclamo_resultado": "",
         "exclusiones": "",
         "reclamo_ya_denunciado": "",
+        "evidencia": [],
     }
 
 
@@ -593,14 +701,43 @@ def nodo_pedir_patente(state: EstadoAgente) -> dict:
     return {"messages": [AIMessage(content=_con_aviso_de_foto(state, texto))]}
 
 
-def nodo_listar_polizas(state: EstadoAgente) -> dict:
-    dni = state["dni"]
-    resultado = consultar_polizas_por_dni.invoke({"dni": dni})
-    mensaje = (
-        f"Encontré estas pólizas asociadas a tu DNI:\n\n{resultado}\n\n"
-        f"¿Sobre cuál patente querés que consultemos?"
-    )
-    return {"messages": [AIMessage(content=mensaje)]}
+def nodo_agente_react(state: EstadoAgente) -> dict:
+    """Camino ReAct: el LLM elige y ejecuta las herramientas de lectura."""
+    # Inyectamos los datos ya conocidos (extraídos por regex en ``clasificar``)
+    # para no perder la robustez entre turnos: el modelo no tiene que volver a
+    # deducir la patente de la conversación.
+    conocidos = []
+    if state.get("patente"):
+        conocidos.append(f"patente={state['patente']}")
+    if state.get("dni"):
+        conocidos.append(f"DNI={state['dni']}")
+    if state.get("reclamo"):
+        conocidos.append(f"reclamo=#{state['reclamo']}")
+
+    mensajes: list[AnyMessage] = []
+    if conocidos:
+        mensajes.append(
+            SystemMessage(
+                content="Datos ya conocidos del cliente: " + ", ".join(conocidos)
+            )
+        )
+    mensajes.extend(state["messages"])
+
+    # ``invocar_llm`` crea el subagente con el modelo que tenga cupo y reintenta
+    # ante errores transitorios.
+    resultado = invocar_llm(construir_react, {"messages": mensajes})
+    mensajes_resultado = resultado["messages"]
+    respuesta = extraer_texto(mensajes_resultado[-1].content).strip()
+    if not respuesta:
+        # Fallback defensivo ante flakiness o rate limits.
+        respuesta = (
+            "Disculpá, no pude armar una respuesta en este momento. "
+            "¿Podrías reformular tu consulta?"
+        )
+    return {
+        "messages": [AIMessage(content=respuesta)],
+        "evidencia": state.get("evidencia", []) + _extraer_traza(mensajes_resultado),
+    }
 
 
 def nodo_consultar_reclamo(state: EstadoAgente) -> dict:
@@ -633,7 +770,11 @@ def nodo_consultar_reclamo(state: EstadoAgente) -> dict:
 def nodo_consultar_poliza(state: EstadoAgente) -> dict:
     patente = state["patente"]
     resultado = consultar_datos_poliza.invoke({"patente": patente})
-    return {"datos_poliza": resultado}
+    return {
+        "datos_poliza": resultado,
+        "evidencia": state.get("evidencia", [])
+        + [_evidencia_tool("consultar_datos_poliza", {"patente": patente}, resultado)],
+    }
 
 
 def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
@@ -655,7 +796,16 @@ def nodo_consultar_clausulas(state: EstadoAgente) -> dict:
         and database.vehiculo_tiene_gnc(patente)
     ):
         exclusiones = buscar_exclusiones(CONSULTA_EXCLUSIONES_GNC, CLAVES_GNC)
-    return {"clausulas": resultado, "exclusiones": exclusiones}
+    return {
+        "clausulas": resultado,
+        "exclusiones": exclusiones,
+        "evidencia": state.get("evidencia", [])
+        + [
+            _evidencia_tool(
+                "consultar_clausulas_poliza", {"consulta": consulta}, resultado
+            )
+        ],
+    }
 
 
 def _fecha_valida(texto: str, hoy: date) -> date:
@@ -836,7 +986,15 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
             "tipo_siniestro": resultado.tipo_siniestro,
             "fecha_ocurrencia": fecha_siniestro.isoformat(),
             "hubo_lesionados": resultado.hubo_lesionados,
-        }
+        },
+        "evidencia": state.get("evidencia", [])
+        + [
+            {
+                "tipo": "dictamen",
+                "determinacion": resultado.determinacion,
+                "fundamento": resultado.fundamento,
+            }
+        ],
     }
 
 
@@ -858,7 +1016,49 @@ def nodo_registrar(state: EstadoAgente) -> dict:
     # Guardamos el número de reclamo para poder consultarlo en turnos siguientes.
     m = re.search(r"#(\d+)", resultado)
     reclamo = m.group(1) if m else ""
-    return {"siniestro_registrado": resultado, "reclamo": reclamo}
+    return {
+        "siniestro_registrado": resultado,
+        "reclamo": reclamo,
+        "evidencia": state.get("evidencia", [])
+        + [
+            _evidencia_tool(
+                "registrar_siniestro",
+                {
+                    "patente": state["patente"],
+                    "tipo_siniestro": dictamen["tipo_siniestro"],
+                    "dictamen": dictamen["determinacion"],
+                },
+                resultado,
+            )
+        ],
+    }
+
+
+# Contacto de la línea de información del manual (pág. 20/27).
+CONTACTO_CONSULTAS = "0810-222-8887"
+
+
+def nodo_derivar_humano(state: EstadoAgente) -> dict:
+    """Hecho que no coincide con ninguna cobertura del manual → derivar a un asesor.
+
+    No registramos el siniestro: no tenemos información para dictaminarlo.
+    """
+    texto = (
+        "No tengo información sobre ese tipo de siniestro en el manual de "
+        "coberturas, así que no puedo darte una determinación ni registrarlo. "
+        "Por favor comunicate con un asesor de San Cristóbal al "
+        f"{CONTACTO_CONSULTAS} para que te ayuden con tu caso."
+    )
+    return {
+        "messages": [AIMessage(content=texto)],
+        "evidencia": state.get("evidencia", [])
+        + [
+            {
+                "tipo": "derivacion",
+                "motivo": "Tipo de siniestro no reconocido en el manual",
+            }
+        ],
+    }
 
 
 def nodo_responder(state: EstadoAgente) -> dict:
@@ -987,8 +1187,9 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
     )
     if menciona_reclamo and state.get("reclamo"):
         return "consultar_reclamo"
+    # DNI o preguntas abiertas -> subagente ReAct (decide qué herramienta usar).
     if extraer_dni(mensaje) and not extraer_patente(mensaje):
-        return "listar_polizas"
+        return "agente_react"
     if extraer_patente(mensaje):
         return "consultar_poliza"
 
@@ -996,12 +1197,12 @@ def rutear_desde_clasificar(state: EstadoAgente) -> str:
     if intencion == "charla":
         return "responder"
     if intencion == "general":
-        return "consultar_clausulas"
+        return "agente_react"
     if state.get("patente"):
         # consulta/siniestro con patente (actual o recordada en la conversación).
         return "consultar_poliza"
     if intencion == "consulta" and state.get("dni"):
-        return "listar_polizas"
+        return "agente_react"
     return "pedir_patente"
 
 
@@ -1013,6 +1214,15 @@ def rutear_desde_clausulas(state: EstadoAgente) -> str:
     return "emitir_dictamen" if state["intencion"] == "siniestro" else "responder"
 
 
+def rutear_desde_dictamen(state: EstadoAgente) -> str:
+    """Reclamo ya denunciado, tipo no reconocido en el manual, o registrar."""
+    if state.get("reclamo_ya_denunciado"):
+        return "consultar_reclamo"
+    if state["dictamen"].get("tipo_siniestro") == "No reconocido":
+        return "derivar_humano"
+    return "registrar"
+
+
 # ---------------------------------------------------------------------------
 # Construcción del grafo
 # ---------------------------------------------------------------------------
@@ -1022,11 +1232,12 @@ def construir_agente():
     grafo.add_node("analizar_foto", nodo_analizar_foto)
     grafo.add_node("clasificar", nodo_clasificar)
     grafo.add_node("pedir_patente", nodo_pedir_patente)
-    grafo.add_node("listar_polizas", nodo_listar_polizas)
     grafo.add_node("consultar_reclamo", nodo_consultar_reclamo)
+    grafo.add_node("agente_react", nodo_agente_react)
     grafo.add_node("consultar_poliza", nodo_consultar_poliza)
     grafo.add_node("consultar_clausulas", nodo_consultar_clausulas)
     grafo.add_node("emitir_dictamen", nodo_emitir_dictamen)
+    grafo.add_node("derivar_humano", nodo_derivar_humano)
     grafo.add_node("registrar", nodo_registrar)
     grafo.add_node("responder", nodo_responder)
     grafo.add_node("compactar", nodo_compactar)
@@ -1038,18 +1249,17 @@ def construir_agente():
         "clasificar",
         rutear_desde_clasificar,
         {
-            "responder": "responder",
-            "consultar_clausulas": "consultar_clausulas",
-            "pedir_patente": "pedir_patente",
-            "listar_polizas": "listar_polizas",
             "consultar_reclamo": "consultar_reclamo",
             "consultar_poliza": "consultar_poliza",
+            "pedir_patente": "pedir_patente",
+            "agente_react": "agente_react",
+            "responder": "responder",
         },
     )
     # Todos los caminos terminan pasando por "compactar", que sólo actúa
     # cuando el historial llegó al umbral.
     grafo.add_edge("pedir_patente", "compactar")
-    grafo.add_edge("listar_polizas", "compactar")
+    grafo.add_edge("agente_react", "compactar")
     # La ficha del reclamo ya es la respuesta: no pasa por el LLM.
     grafo.add_edge("consultar_reclamo", "compactar")
     grafo.add_edge("consultar_poliza", "consultar_clausulas")
@@ -1059,12 +1269,18 @@ def construir_agente():
         {"emitir_dictamen": "emitir_dictamen", "responder": "responder"},
     )
     # Si el hecho ya estaba denunciado, se muestra ese reclamo en lugar de
-    # registrar un duplicado.
+    # registrar un duplicado. Si el tipo de siniestro no está en el manual, se
+    # deriva a un asesor.
     grafo.add_conditional_edges(
         "emitir_dictamen",
-        lambda s: "consultar_reclamo" if s.get("reclamo_ya_denunciado") else "registrar",
-        {"consultar_reclamo": "consultar_reclamo", "registrar": "registrar"},
+        rutear_desde_dictamen,
+        {
+            "consultar_reclamo": "consultar_reclamo",
+            "derivar_humano": "derivar_humano",
+            "registrar": "registrar",
+        },
     )
+    grafo.add_edge("derivar_humano", "compactar")
     grafo.add_edge("registrar", "responder")
     grafo.add_edge("responder", "compactar")
     grafo.add_edge("compactar", END)
