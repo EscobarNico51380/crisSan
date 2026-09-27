@@ -4,9 +4,9 @@ Una sola lista del grupo. Cuando algo se termina, se marca ✅ y se anota el
 commit. Al final está el estado del sistema frente a lo que piden los notebooks
 de la cátedra.
 
-**Fechas:** video de 10-15 minutos el **30/09** (todos los grupos). Defensa
-oral el 30/09 o el 14/10 (turno tarde/noche), o el 01/10 o el 08/10 (turno
-mañana); incluye 1-2 preguntas sobre el TP1.
+**Fechas:** no hay video. La presentación es **oral, con PowerPoint y
+demostración en vivo**, en la defensa: el 30/09 o el 14/10 (turno tarde/noche),
+o el 01/10 o el 08/10 (turno mañana); incluye 1-2 preguntas sobre el TP1.
 
 **Formato de entrega (confirmado por el profesor):** proyecto de varios `.py`
 con la documentación, siempre que incluya las instrucciones para reproducirlo.
@@ -35,7 +35,11 @@ No hace falta notebook.
 | El robo del auto todo riesgo con GNC (AD789EF) salió *Cubierto* 1 de 5 veces | ✅ Decidido: se acepta y se explica en la defensa | Es un límite real de los LLM: aun con `temperature=0`, no son completamente deterministas |
 | Cuando no hay precedentes del mismo producto, se muestran los de otros productos | ✅ Decidido: se deja como está | Se probó cargando el precedente sospechoso y el dictamen salió bien: no hay evidencia de que confunda |
 | La consola de Streamlit muestra decenas de errores *"No module named 'torchvision'"* | ⏳ Diagnosticado, sin acción por ahora | No rompe nada: el vigilante de archivos de Streamlit inspecciona todos los módulos cargados, y ~100 módulos de imágenes de `transformers` (que no usamos) fallan al cargarse sin `torchvision`. Streamlit atrapa cada error y sigue. Reproducido fuera de Streamlit: 102 módulos fallan. Probablemente es lo que vio Nicolás y por lo que instaló `torchvision` (no una diferencia de Linux): preguntarle. Arreglo propuesto: `fileWatcherType = "none"` en `.streamlit/config.toml`; si se confirma, sacar `torchvision` también de Linux |
-| Si el último paso recibe una respuesta vacía del modelo, el cliente ve "¿Podrías reformular tu consulta?" aunque su reclamo ya quedó registrado | ⏳ Propuesta: si ya hay reclamo registrado, armar la respuesta con código (la ficha del reclamo, como al consultarlo); si no, reintentar una vez con el otro modelo | Pasó 1 vez en la prueba de fotos del 25/09, al pasar del modelo principal al de respaldo |
+| Si el último paso recibe una respuesta vacía del modelo, el cliente ve "¿Podrías reformular tu consulta?" aunque su reclamo ya quedó registrado | ✅ Un reintento; y en una denuncia la ficha la arma siempre el código (en la prueba del 27/09 el modelo devolvió vacío dos veces y quedó la ficha) | `5a41204` |
+| La traza de la póliza vencida decía "Cubierto" y el chat "Rechazado" | ✅ Muestra el dictamen final y, si un control lo cambió, lo que había dicho el modelo | `5a41204` |
+| Un pedido de grúa se derivaba a un asesor como "no reconocido" | ✅ Tipo "Asistencia mecánica" (dictamen Asistencia 24) | `5a41204` |
+| Al registrar una denuncia, el modelo dio un número de reclamo equivocado, y en la vencida enterró el rechazo | ✅ La ficha la arma el código; el modelo agrega los pasos a seguir | `5a41204` |
+| Una consulta por el ReAct superó el límite de tokens por minuto (413) | ✅ 6 fragmentos por búsqueda y una sola búsqueda por pregunta | `5a41204` |
 | La terminal de la instalación muestra avisos que parecen errores (versión nueva de pip, Hugging Face sin token, *symlinks* en Windows) | ⏳ Propuesta: apagarlos con variables de entorno en `iniciar.py` | Vistos en la prueba desde cero del 25/09 |
 | La clase `Chroma` que usamos está deprecada | Se deja así: el proyecto dura un mes | |
 
@@ -53,19 +57,20 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Modelo de respaldo automático cuando el principal agota su cupo, sin reintentar el agotado | ✅ | `c72e8af` |
 | Elegir el modelo desde la web (el otro queda de respaldo) | ✅ | `7e986c3` |
 | Poder cambiar de modelo desde la configuración (`make_llm`, como en el notebook de agentes) | 🔶 Casi | `llm.py` ya crea los modelos con `make_llm` y los nombres están en `config.py`. Falta poder elegir otro proveedor (OpenAI, Ollama) |
-| Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ✅ Integrado (rama `integracion-react`) | El subagente ReAct resuelve las preguntas abiertas (`general`, DNI). El camino del dictamen sigue determinístico. **Pendiente de decidir:** si también querés que pase por ReAct la consulta por patente (riesgo: se pierde el control de exclusiones por GNC que hace `nodo_consultar_clausulas`) |
-| Herramienta nueva: listar los reclamos de un cliente ("¿qué reclamos tengo?") | ⏳ | Hoy no se puede responder sin el número de reclamo. Conviene sumarla junto con el ReAct |
-| Herramienta nueva: pedir una grúa o asistencia | ⏳ | Estaba en el diseño original (`IdeaTP.md`, `pedir_grua`) y nunca se hizo. Simulada, como el resto de los datos |
-| Herramienta nueva: calcular cuánto paga el cliente (costo de la reparación menos la franquicia) | ⏳ | Es una cuenta: la hace el código, no el modelo. Como la calculadora del notebook de agentes de la cátedra |
+| Que el LLM elija las herramientas (patrón ReAct con `create_agent`), dejando fijo el camino del dictamen | ✅ Nicolás: `d637ff4`, `bea309e`; merge `40abe81` | Todas las consultas (póliza, DNI, reclamos, cuánto paga, manual) pasan por el ReAct; las denuncias, por el camino fijo. La consulta por patente se pasó al ReAct (`5a41204`) y las exclusiones por GNC, a la herramienta de búsqueda, así no se pierden. Ver `DOCUMENTACION.md` |
+| Herramienta nueva: listar los reclamos de un cliente ("¿qué reclamos tengo?") | ✅ `listar_reclamos`, por patente o DNI | `5a41204` |
+| Herramienta nueva: calcular cuánto paga el cliente (costo de la reparación menos la franquicia) | ✅ `calcular_pago_cliente`: la cuenta la hace el código | `5a41204` |
+| Herramienta nueva: pedir una grúa o asistencia | ⏳ Queda como limitación | Sería una herramienta que escribe, y el ReAct solo tiene de lectura. Hoy un pedido de grúa se registra como reclamo "Derivado a Asistencia 24" |
+| Probar el ReAct con el modelo principal: la batería completa (`test_casos.py`) y el recorrido de la web | ⏳ | El 27/09 la segunda vuelta de pruebas la respondió casi toda el modelo de respaldo (cupo agotado) |
 | Mostrar en la web de dónde sale cada respuesta: herramienta elegida, con qué datos, qué devolvió, y los fragmentos del manual con su puntaje | ✅ | Pestaña "🔍 Cómo llegué a esto" (Razonamiento / Herramientas / Fuentes) en el chat. `rag.buscar_clausulas_con_evidencia` devuelve los chunks con sección, página y similitud coseno |
-| Fijar el tipo de siniestro a los del manual, y derivar a un asesor si no coincide | ✅ | `DictamenSiniestro.tipo_siniestro` es un `Literal` con los 11 tipos del manual + `No reconocido`; en ese caso `nodo_derivar_humano` deriva al 0810-222-8887 y no registra |
+| Fijar el tipo de siniestro a los del manual, y derivar a un asesor si no coincide | ✅ | `DictamenSiniestro.tipo_siniestro` es un `Literal` con los 11 tipos del manual, `Asistencia mecánica` (sumado en `5a41204`) y `No reconocido`; en ese caso `nodo_derivar_humano` deriva al 0810-222-8887 y no registra |
 | Interpretar imágenes enviadas por el cliente | ✅ Una foto por mensaje en la web; el modelo de visión describe y el dictamen la usa como evidencia | `9f7e9c3` |
 | Probar los dictámenes con foto con el modelo principal | 🔶 | 6 casos bien con el principal el 25/09 (ver `DOCUMENTACION.md`). Faltan el choque con relato de granizo (paso 12 del recorrido) y el parabrisas del auto con GNC, que los respondió el respaldo |
 | Probar con fotos propias del grupo | ⏳ | Las de ejemplo son de Wikimedia Commons |
 | Exclusiones por gas licuado (GLP) y por uso para transporte de pasajeros | ⏳ A confirmar | El manual las tiene; se sumarían con el mismo mecanismo que el GNC |
 | Historial que sobreviva al cerrar la app (`SqliteSaver`) | ⏳ Baja prioridad | Suma una dependencia |
 | Pruebas de las herramientas sin usar el LLM | ⏳ Baja prioridad | Como las del notebook de agentes; hoy `test_casos.py` pasa siempre por el LLM |
-| Límite de recursión en cada consulta (`recursion_limit`) | ⏳ Baja prioridad | Importa cuando exista el agente ReAct, que puede entrar en bucle |
+| Límite de recursión en cada consulta (`recursion_limit`) | ⏳ Baja prioridad | El ReAct usa el de LangGraph por defecto (25 pasos); en las pruebas nunca pasó de 2 herramientas |
 | Cambiar `MemorySaver` por `InMemorySaver` | ⏳ Baja prioridad | Nombre moderno de lo mismo |
 | Ajustar el tamaño y el solapamiento de los fragmentos del manual | ⏳ Baja prioridad | Cualquier cambio obliga a repetir la prueba del GNC |
 | Demo mínima de LCEL (`prompt \| modelo \| parser`) | ⏳ Opcional | La enseña el notebook de RAG; el sistema no la necesita |
@@ -88,10 +93,10 @@ el agente ReAct y las imágenes se apoyan en eso.
 
 | Entregable | Estado |
 |---|---|
-| Slides de la defensa | 🔶 Guía con el contenido de cada slide y lo que se dice: `guia_presentacion.md`. Falta la parte del ReAct y generarlas |
-| Mostrar el grafo coloreado según quién decide cada paso (código, RAG o LLM), con el recorrido de una consulta y los tres errores de ejemplo (ver `DOCUMENTACION.md`) | ⏳ |
-| Guion y grabación del video (vence el 30/09) | 🔶 Estructura, tiempos, demo y lista de antes de grabar en `guia_presentacion.md`. Falta repartir quién habla, el ReAct y grabar |
-| Vaciar la tabla de siniestros antes de grabar (las pruebas quedan como precedentes) | ⏳ |
+| Slides de la presentación (PowerPoint) | 🔶 `guia_presentacion.md` tiene el contenido de cada slide, lo que se dice, el grafo actualizado con el ReAct y el pedido para generarlas. Falta generarlas |
+| Mostrar el grafo coloreado según quién decide cada paso (código, RAG o LLM), con el recorrido de una consulta y los tres errores de ejemplo | 🔶 El `mermaid` está actualizado con el ReAct (en `DOCUMENTACION.md` y en la guía). Falta exportar la imagen |
+| Demo en vivo | 🔶 Pasos, qué decir y lista de antes de presentar en `guia_presentacion.md`. Falta repartir quién habla y ensayarla |
+| Vaciar la tabla de siniestros antes de presentar (las pruebas quedan como precedentes) | ⏳ |
 | Repaso del TP1 | 🔶 `repaso_TP1.md`: preguntas probables con respuesta, los conceptos de la cátedra y dos inconsistencias del notebook para tener preparadas. Falta que lo lea el grupo y que cada uno sume lo suyo si su TP1 fue distinto |
 
 ## Cierre (lo último antes de entregar)

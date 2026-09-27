@@ -12,7 +12,10 @@
 - Responder preguntas sobre el contenido de una póliza (**RAG** sobre el manual).
 - **Determinar si un siniestro está cubierto o no** y fundamentarlo.
 - Consultar el estado, plan y datos de una póliza (por patente o por DNI).
+- Listar los reclamos de un cliente y calcular cuánto paga de una reparación.
 - Registrar siniestros en una base relacional y emitir número de reclamo.
+- Elegir por sí mismo qué herramienta usar en las consultas (agente **ReAct**),
+  y mostrar la **traza** de cada respuesta: herramientas, datos y fuentes.
 - Usar **resoluciones previas** (siniestros históricos) como precedentes.
 - Mantener **memoria conversacional** entre turnos.
 
@@ -48,13 +51,13 @@ Usuario (chat web, con fotos / consola)
 │                                                               │
 │  analizar_foto (visión) → clasificar (LLM + regex)            │
 │     ├── responder (charla)                                    │
-│     ├── consultar_clausulas (pregunta general, RAG)           │
-│     ├── listar_polizas (DNI)                                  │
+│     ├── agente_react (consultas: el LLM elige entre 6 tools)  │
 │     ├── consultar_reclamo (ficha armada por código)           │
 │     ├── pedir_patente                                         │
 │     └── consultar_poliza (SQL) → consultar_clausulas (RAG)    │
 │            → emitir_dictamen (LLM + controles con código)     │
-│            → registrar → responder                            │
+│            → registrar → responder (ficha + pasos a seguir)   │
+│              (o derivar_humano si el hecho no está en manual) │
 │  Todos los caminos terminan en compactar (resume si hace falta)│
 │  Memoria: checkpointer + thread_id + resumen                  │
 └───────────┬───────────────────────┬───────────────┬──────────┘
@@ -76,6 +79,10 @@ foto (si hay) → patente (regex) → póliza (SQL) → cláusulas y exclusiones
   → registrar → responder
 ```
 
+**Flujo de una consulta** (patente, DNI, reclamos, cuánto paga, preguntas
+sobre el manual): el subagente ReAct decide qué herramienta llamar, la llama,
+lee el resultado y decide si necesita otra o ya puede responder (§28).
+
 El grafo completo, coloreado según quién decide cada paso (código, RAG o LLM),
 está en §25.
 
@@ -85,7 +92,7 @@ está en §25.
 
 | Componente | Tecnología | Por qué |
 |---|---|---|
-| Orquestación | **LangGraph** (`StateGraph`) | Control explícito del flujo (grafo de estado), no un ReAct a ciegas |
+| Orquestación | **LangGraph** (`StateGraph`) + **`create_agent`** (ReAct) | Grafo explícito para las denuncias; subagente ReAct, que elige las herramientas, para las consultas (§28) |
 | Framework | **LangChain** (`@tool`, retriever, loaders) | Requisito del enunciado |
 | LLM | **Groq** — `openai/gpt-oss-120b`, con `openai/gpt-oss-20b` de respaldo | Free tier: 200K tokens/día por modelo y por cuenta, 30 req/min. Rápido (500 tps). Si el principal agota su cupo, pasa solo al respaldo (§20) |
 | Visión | **Groq** — `qwen/qwen3.8-27b` | El único modelo de Groq que acepta imágenes. Solo describe la foto: no decide (§26) |
@@ -107,8 +114,9 @@ está en §25.
 | `config.py` | Carga `.env`, paths, modelos y constantes centralizadas |
 | `database.py` | Schema SQLite (clientes, vehículos, pólizas, siniestros) + consultas |
 | `rag.py` | Pipeline RAG: carga PDF, chunking, embeddings, Chroma, retrieval híbrido |
-| `tools.py` | Herramientas del agente decoradas con `@tool` |
-| `agent.py` | Grafo de estado LangGraph (nodos, routing, prompts, memoria) |
+| `tools.py` | Herramientas del agente decoradas con `@tool`, y las que recibe el ReAct (`HERRAMIENTAS_LECTURA`) |
+| `agent.py` | Grafo de estado LangGraph (nodos, routing, prompts, memoria) y subagente ReAct |
+| `test_react_traza.py` | Prueba del ReAct: que el modelo elija la herramienta esperada y que quede la traza (consume cupo) |
 | `main.py` | Loop interactivo por consola |
 | `app.py` | Interfaz web Streamlit (chat + memoria por sesión) |
 | `costos.py` | Costo estimado de cada turno y de la conversación, a partir de los tokens |
@@ -119,14 +127,16 @@ está en §25.
 
 ## 6. Herramientas del agente (`@tool`)
 
-| Tool | Input | Acción |
-|---|---|---|
-| `consultar_datos_poliza` | patente | Consulta SQL: póliza, titular, producto, franquicia, estado |
-| `consultar_clausulas_poliza` | consulta | Búsqueda RAG híbrida en el manual |
-| `consultar_polizas_por_dni` | dni | Lista las pólizas de un titular |
-| `consultar_estado_reclamo` | número de reclamo | Devuelve la ficha completa del reclamo: vehículo, hecho, relato, foto, dictamen, motivo y estado |
-| `consultar_siniestros_previos` | límite, tipo, patente (opcionales) | Devuelve siniestros históricos con su dictamen (precedentes), del mismo producto si se da la patente |
-| `registrar_siniestro` | patente, tipo, fecha, lesionados, dictamen, motivo, descripción de la foto | INSERT en `siniestros` + número de reclamo |
+| Tool | Input | Acción | ¿La recibe el ReAct? |
+|---|---|---|---|
+| `consultar_datos_poliza` | patente | Consulta SQL: póliza, titular, producto, franquicia, estado | Sí |
+| `consultar_clausulas_poliza` | consulta, patente (opcional) | Búsqueda RAG híbrida en el manual (los 6 mejores fragmentos); con la patente de un auto con GNC, suma sus exclusiones | Sí |
+| `consultar_polizas_por_dni` | dni | Lista las pólizas de un titular | Sí |
+| `consultar_estado_reclamo` | número de reclamo | Devuelve la ficha completa del reclamo: vehículo, hecho, relato, foto, dictamen, motivo y estado | Sí |
+| `listar_reclamos` | patente o dni | Los reclamos de un auto o de un titular: número, fecha, tipo, dictamen y estado | Sí |
+| `calcular_pago_cliente` | patente, costo de la reparación | Cuánto paga el cliente (hasta la franquicia) y cuánto la aseguradora (con tope en la suma asegurada); avisa si la póliza está vencida o impaga | Sí |
+| `consultar_siniestros_previos` | límite, tipo, patente (opcionales) | Devuelve siniestros históricos con su dictamen (precedentes), del mismo producto si se da la patente | No: la usa el dictamen |
+| `registrar_siniestro` | patente, tipo, fecha, lesionados, dictamen, motivo, descripción de la foto | INSERT en `siniestros` + número de reclamo | **No**: solo el camino fijo, después de los controles |
 
 ---
 
@@ -135,7 +145,8 @@ está en §25.
 **Estado** (`EstadoAgente`): `messages`, `intencion`, `consulta`, `patente`, `dni`,
 `reclamo`, `datos_poliza`, `clausulas`, `exclusiones`, `dictamen`,
 `siniestro_registrado`, `reclamo_resultado`, `resumen`, `reclamo_ya_denunciado`,
-`foto`, `descripcion_foto`, `patente_foto`, `aviso_foto`.
+`foto`, `descripcion_foto`, `patente_foto`, `aviso_foto`, `evidencia` (la traza
+del turno).
 
 **Nodos:**
 
@@ -144,23 +155,24 @@ está en §25.
 | `analizar_foto` | Si el mensaje trae una foto, el modelo de visión la describe; sin foto no hace nada (§26) |
 | `clasificar` | Extrae patente/DNI con **regex** + clasifica intención con LLM (`json_schema`). Ve los últimos mensajes y devuelve además la pregunta reescrita para que se entienda sola, que es la que se usa para buscar (§15) |
 | `pedir_patente` | Pide la patente si falta |
-| `listar_polizas` | Lista las pólizas de un DNI y pide elegir |
+| `agente_react` | Subagente ReAct (`create_agent`) con las 6 herramientas de lectura: el LLM elige cuáles llamar. Recibe los datos ya conocidos (patente, DNI, reclamo, foto) y deja su traza en `evidencia` (§28) |
 | `consultar_reclamo` | Responde con la ficha completa del reclamo, armada por código, sin LLM |
+| `derivar_humano` | Si el hecho no coincide con ningún tipo de siniestro del manual, deriva a un asesor y no registra |
 | `consultar_poliza` | Llama a la tool de SQL |
 | `consultar_clausulas` | RAG híbrido sobre el manual; si el vehículo tiene GNC, además busca las exclusiones que dependen de eso (§14) |
 | `emitir_dictamen` | El LLM analiza la cobertura (póliza, cláusulas, exclusiones, precedentes, foto). Después, una llamada aparte compara foto y relato, y el código controla vigencia, pago, plazo de denuncia, duplicados y patente de la foto (§21, §24, §26). Si el hecho ya estaba denunciado, pasa a `consultar_reclamo` en vez de registrar |
 | `registrar` | INSERT del siniestro en SQLite |
-| `responder` | Genera la respuesta final en lenguaje natural |
+| `responder` | Charla: responde el LLM. Denuncia registrada: la ficha del reclamo la arma el código y el LLM agrega solo los pasos a seguir (§28) |
 | `compactar` | Al final de cada turno: si el historial llegó a 12 mensajes, resume los viejos y deja los últimos 6 (§16) |
 
-**Routing** (señales explícitas del mensaje actual > intención del LLM):
+**Routing:**
 ```
-reclamo (si se menciona) → consultar_reclamo
-dni/patente (en el mensaje) → listar_polizas / consultar_poliza
-general                  → consultar_clausulas
-charla                   → responder
-consulta/siniestro con patente recordada → consultar_poliza
-(ninguno)                → pedir_patente
+menciona un reclamo (no "reclamos") y hay uno → consultar_reclamo
+siniestro con patente     → consultar_poliza (camino fijo del dictamen)
+siniestro sin patente     → pedir_patente
+charla sin patente ni DNI → responder
+general, o consulta con patente o DNI (del mensaje o recordados) → agente_react
+(ninguno)                 → pedir_patente
 ```
 
 **Memoria:** `MemorySaver` (checkpointer) + `thread_id` por sesión. Los campos
@@ -196,8 +208,10 @@ se mantiene acotado con una ventana + resumen (§16).
    términos raros de dominio. Costo: e5 requiere prefijos query/passage.
 4. **Retrieval híbrido (BM25 + semántico)** → combina exactitud léxica y
    comprensión semántica. Costo: complejidad extra y pesos a tunear.
-5. **Grafo de estado explícito en vez de ReAct** → control total del flujo y
-   del dictamen. Costo: más código que un `create_react_agent`.
+5. **Grafo explícito para las denuncias, ReAct para las consultas** → el
+   dictamen sigue siempre los mismos pasos y controles; en las consultas, que
+   no tienen un orden fijo, el modelo elige la herramienta (§28). Costo: dos
+   caminos que mantener, y una consulta por el ReAct usa una llamada más.
 6. **Extracción determinística de patente/DNI (regex)** → robusta, no depende
    del LLM. Costo: menos flexible para formatos no previstos.
 7. **Controles con código después del dictamen** (vigencia, pago, plazo de
@@ -216,6 +230,13 @@ se mantiene acotado con una ventana + resumen (§16).
     ~4.000 a ~900 tokens. Costo: no puede agregar nada fuera de la ficha.
 12. **Memoria con ventana + resumen** → el historial no crece sin límite (§16).
     Costo: el resumen puede deformar un detalle.
+13. **El ReAct solo tiene herramientas de lectura** → el modelo no puede
+    registrar un reclamo salteando los controles, ni registrarlo dos veces
+    (§28). Costo: el ReAct no puede tomar una denuncia; se toma por el camino
+    fijo.
+14. **La ficha de una denuncia la arma el código** → el número de reclamo y el
+    dictamen siempre son los de la base; el modelo solo agrega los pasos a
+    seguir (§28). Costo: la respuesta es más larga y menos conversacional.
 
 ---
 
@@ -260,6 +281,13 @@ se mantiene acotado con una ventana + resumen (§16).
 | 32 | El modelo de visión confundía granizo con nieve e inventaba un vuelco | Sus respuestas son muy sensibles a la redacción de las instrucciones | Se probaron tres redacciones con las mismas fotos y se eligió la única que no inventó nada (§26) |
 | 33 | Una foto de un choque con un relato de granizo salía cubierta | La comparación foto-relato era una regla del prompt del dictamen, y después un campo más de su formulario: en medio del prompt largo quedaba diluida y el modelo chico la salteaba | Llamada aparte, corta y enfocada, que solo compara foto y relato; si no coinciden, el código pone *Requiere peritaje*. Aislada, los dos modelos la resuelven bien (§26) |
 | 34 | Dos hechos distintos del mismo auto el mismo día se tomaban como duplicados (en el recorrido: el granizo del paso 11 se confundía con el robo del paso 7) | El control de duplicados comparaba solo auto y fecha | Compara también la familia del tipo de siniestro (robo, incendio, granizo, cristales, choque) (§26) |
+| 35 | Los saludos fallaban con `KeyError 'responder'` al integrar el ReAct | El mapa de rutas del grafo no tenía esa salida | Agregarla (lo detectó la batería `test_casos.py`) |
+| 36 | La traza de la póliza vencida decía "Cubierto" y el chat, "Rechazado" | La traza guardaba el dictamen del modelo, antes de los controles del código | Guarda el dictamen final y, si un control lo cambió, también lo que había dicho el modelo: "el modelo había dicho Cubierto; lo cambió un control del sistema" (§28) |
+| 37 | Un pedido de grúa terminaba derivado a un asesor, "sin información en el manual" | Al fijar los tipos de siniestro a los del manual quedó afuera la asistencia (grúa, batería, auxilio), que no es una cobertura de daños | Tipo "Asistencia mecánica", con dictamen *Asistencia 24*; el clasificador toma los pedidos de auxilio como denuncia (§28) |
+| 38 | Al registrar una denuncia, la respuesta dio un número de reclamo equivocado (#53 en vez de #52); en la póliza vencida explicó cómo tramitar la cobertura y el rechazo quedó al final o ni apareció | La respuesta entera la redactaba el modelo a partir de los datos | La ficha del reclamo (número, dictamen, motivo, estado) la arma el código, como al consultar un reclamo; el modelo escribe solo los pasos a seguir, con la instrucción de no contradecir el dictamen (§28) |
+| 39 | Una consulta por el ReAct falló con `413 Request too large` | Cada búsqueda en el manual devuelve ~10 fragmentos (~2.500 tokens) y el ReAct buscó varias veces en el mismo pedido: pasó el límite de 8.000 tokens por minuto del plan gratuito | La herramienta del ReAct devuelve los 6 mejores fragmentos y el prompt le pide buscar una sola vez; el dictamen sigue con los ~10 (§28) |
+| 40 | "¿Qué reclamos tengo?" mostraba solo el último reclamo, y "¿cuánto pago si el arreglo sale 800.000?" se tomaba como una denuncia | El ruteo mandaba todo lo que dijera "reclamo" a la ficha del último, y el clasificador veía un daño | "Reclamos", en plural, va al ReAct (`listar_reclamos`); el clasificador toma como consulta las preguntas de cuánto paga (§28) |
+| 41 | Si el modelo devolvía una respuesta vacía, el cliente veía "¿Podrías reformular tu consulta?", aunque su reclamo ya estuviera registrado | `gpt-oss` a veces gasta la respuesta entera en razonar | Un reintento; y en una denuncia la ficha la arma el código, así que nunca queda vacía (§28) |
 
 ---
 
@@ -310,6 +338,10 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - ✅ Ficha completa del reclamo, con el motivo del dictamen.
 - ✅ Mensaje amigable ante errores de la API.
 - ✅ Instalación y arranque con un solo comando (`python iniciar.py`).
+- ✅ Agente ReAct para las consultas: el modelo elige entre 6 herramientas de lectura.
+- ✅ Listado de los reclamos de un cliente y cálculo de cuánto paga de una reparación.
+- ✅ Traza de cada respuesta en la web ("🔍 Cómo llegué a esto"): herramientas, datos y fuentes con su similitud.
+- ✅ Tipos de siniestro fijados a los del manual; si no coincide, deriva a un asesor.
 
 ## 13. Limitaciones y mejoras futuras
 
@@ -326,8 +358,11 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
 - Las exclusiones que dependen del vehículo solo contemplan el **GNC** (§14).
 - El modelado de GNC no distingue "declarado vs no declarado".
 - La tabla de límites (pág 5) a veces rankea alto (falso positivo menor).
-- El agente no elige herramientas por sí mismo (patrón ReAct): el flujo es un
-  grafo determinístico. Está en desarrollo (ver `PENDIENTES.md`).
+- **El ReAct no puede tomar una denuncia** (no tiene la herramienta de
+  registrar, a propósito): si en una consulta el cliente cuenta un hecho, le
+  explica que la tome indicando la patente, y ese mensaje va al camino fijo.
+- **No hay herramienta para pedir una grúa:** el pedido se registra como
+  reclamo "Derivado a Asistencia 24" y se le da el teléfono.
 
 ---
 
@@ -837,7 +872,7 @@ llegó al dictamen. Hay que revisar si con el modelo principal pasa lo mismo.
 ## 22. Recorrido sugerido en la web
 
 Para compensar que la entrega no es un notebook, la barra lateral del chat
-ofrece un **recorrido sugerido**: diez consultas en orden, cada una con un
+ofrece un **recorrido sugerido**: doce consultas en orden, cada una con un
 botón. Al tocarlo, la consulta se envía como si se hubiera escrito, y debajo de
 cada botón se explica qué muestra. El chat sigue disponible para escribir
 cualquier otra consulta.
@@ -854,10 +889,15 @@ cualquier otra consulta.
 | 8 | *Me robaron el auto AF987XX* | Mismo robo y mismo plan, con GNC: rechazado por una exclusión del manual |
 | 9 | *Me robaron el auto AJ222NP* | Póliza vencida: la rechaza un control del sistema, sin el LLM |
 | 10 | *Mi DNI es 30555777* | Busca por DNI y lista las pólizas |
+| 11 | *Me cayó granizo sobre la AC456BD* 📷 | Con foto de granizo: el modelo de visión describe el daño y coincide con el relato |
+| 12 | *Me cayó granizo sobre la AB123CD* 📷 | Con la foto de un choque frontal: no coincide con el relato, así que pide peritaje |
 
-El recorrido completo usa unos 60.000 tokens (cuatro dictámenes de ~9.000 y
-seis consultas más livianas), menos de un tercio del cupo diario del modelo
-principal.
+Desde el ReAct, los pasos 2, 3, 4 y 10 pasan por el subagente, que elige la
+herramienta (la póliza, el manual o las pólizas del DNI); los demás, por el
+camino fijo del dictamen o la ficha del reclamo.
+
+El recorrido completo usa unos 80.000 tokens, menos de la mitad del cupo diario
+del modelo principal.
 
 Se descartaron dos alternativas: una pestaña aparte con tarjetas explicativas
 (obliga a ir y venir entre la pestaña y el chat) y una reproducción automática
@@ -1043,29 +1083,29 @@ graph TD
     analizar_foto --> clasificar
     clasificar["clasificar<br/>LLM: intención y pregunta reescrita<br/>Código: patente, DNI y reclamo"]:::mixto
     clasificar -. charla .-> responder
-    clasificar -. pregunta general .-> consultar_clausulas
     clasificar -. menciona un reclamo .-> consultar_reclamo
-    clasificar -. da un DNI .-> listar_polizas
-    clasificar -. falta la patente .-> pedir_patente
-    clasificar -. consulta o denuncia .-> consultar_poliza
+    clasificar -. consulta o pregunta general .-> agente_react
+    clasificar -. denuncia sin patente .-> pedir_patente
+    clasificar -. denuncia .-> consultar_poliza
+    agente_react["agente_react · ReAct<br/>LLM: elige entre 6 herramientas de lectura<br/>Código y RAG: las ejecutan"]:::mixto
     consultar_poliza["consultar_poliza<br/>Código: SQL"]:::codigo
     consultar_clausulas["consultar_clausulas<br/>RAG: busca en el manual<br/>y las exclusiones si el auto tiene GNC"]:::rag
     emitir_dictamen["emitir_dictamen<br/>LLM: ¿lo cubre el manual? ¿la foto coincide?<br/>Código: vigencia, pago, plazo, duplicado, patente de la foto"]:::mixto
     registrar["registrar<br/>Código: guarda el reclamo"]:::codigo
-    responder["responder<br/>LLM: redacta la respuesta"]:::llm
+    derivar_humano["derivar_humano<br/>Código: deriva a un asesor"]:::codigo
+    responder["responder<br/>Código: ficha del reclamo<br/>LLM: redacta"]:::mixto
     consultar_reclamo["consultar_reclamo<br/>Código: ficha del reclamo"]:::codigo
-    listar_polizas["listar_polizas<br/>Código: SQL"]:::codigo
     pedir_patente["pedir_patente<br/>Código: mensaje fijo"]:::codigo
     compactar["compactar<br/>LLM: resume si la charla es larga"]:::llm
-    consultar_poliza --> consultar_clausulas
-    consultar_clausulas -. denuncia .-> emitir_dictamen
-    consultar_clausulas -. consulta .-> responder
+    consultar_poliza --> consultar_clausulas --> emitir_dictamen
     emitir_dictamen -. ya estaba denunciado .-> consultar_reclamo
+    emitir_dictamen -. tipo que no está en el manual .-> derivar_humano
     emitir_dictamen -. hecho nuevo .-> registrar
     registrar --> responder
     responder --> compactar
+    agente_react --> compactar
     consultar_reclamo --> compactar
-    listar_polizas --> compactar
+    derivar_humano --> compactar
     pedir_patente --> compactar
     compactar --> fin([Respuesta])
     classDef codigo fill:#dbeafe,stroke:#1d4ed8,color:#000
@@ -1095,7 +1135,13 @@ Con *"Me robaron el auto AJ222NP el 10 de mayo"*:
 | Decidir si el robo está cubierto según el manual | LLM |
 | Verificar vigencia, pago, plazo de denuncia y si ya estaba denunciado; si algo no está en regla, el dictamen pasa a Rechazado | Código |
 | Registrar el reclamo | Código |
-| Redactar la respuesta | LLM |
+| Armar la ficha del reclamo (número, dictamen, motivo, estado) | Código |
+| Redactar los pasos a seguir | LLM |
+
+Con una consulta, *"Si arreglar la puerta de la AB123CD sale 800.000 pesos,
+¿cuánto pago yo?"*: el LLM entiende que es una consulta y elige la herramienta
+`calcular_pago_cliente`; el código busca la franquicia y hace la cuenta
+($460.000 el cliente, $340.000 la aseguradora); el LLM redacta.
 
 ### Tres errores, uno por pieza
 
@@ -1271,7 +1317,9 @@ cada sección.
 |---|---|---|
 | Base de datos | `database.consultar_datos_poliza('AB123CD')`, `consultar_polizas_por_dni('30555777')`, reclamo `999` | Datos de la póliza; las 3 pólizas de Laura Gomez; "no se encontró" |
 | RAG | `buscar_clausulas('granizo')` | El ítem 10 (Granizo) de la pág. 17, con su encabezado |
-| Exclusiones por GNC | `buscar_exclusiones(CONSULTA_EXCLUSIONES_GNC, CLAVES_GNC)` | Las 3 exclusiones (pág. 10, 15 y 16), y no el texto de declarar el equipo |
+| Exclusiones por GNC | `tools.exclusiones_del_vehiculo('AF987XX')`; `consultar_clausulas_poliza` con y sin la patente | Las 3 exclusiones (pág. 10, 15 y 16), y no el texto de declarar el equipo; con la patente del AF987XX se suman, sin ella no |
+| Herramientas nuevas | `listar_reclamos` por patente, por DNI y sin reclamos; `calcular_pago_cliente` con 800.000 y 300.000 en el AB123CD, y con la póliza vencida y la impaga | La lista del más nuevo al más viejo; "no hay reclamos"; $460.000 / $340.000 y $300.000 / $0; el aviso de vencida o de pago pendiente |
+| Ruteo | `rutear_desde_clasificar` con estados armados (charla, consulta con y sin patente, general, denuncia con y sin patente, "mi reclamo" y "mis reclamos", DNI) | responder; agente_react o pedir_patente; agente_react; consultar_poliza o pedir_patente; consultar_reclamo y agente_react; agente_react |
 | Vigencia, pago y plazo | `motivo_de_rechazo_administrativo` con: póliza vigente; vencida; siniestro anterior al inicio; impaga; hecho de hace 3 días; hecho de hace 4 días | En regla; vencida; no vigente; pago pendiente; en plazo; fuera de plazo |
 | Duplicados | `familia_de_siniestro` y `buscar_reclamo_existente` con un robo de hoy ya registrado | "Robo total" → mismo hecho; "Granizo" → hecho distinto |
 | Disyuntor | `llm.invocar` con modelos simulados | Principal agotado → responde el respaldo y no se reintenta; al liberarse, vuelve el principal; los dos agotados → mensaje con la espera |
@@ -1297,6 +1345,7 @@ varios turnos.
 | Reclamo | *¿En qué estado está mi reclamo #N?* → *¿Y por qué me lo aprobaron?* → *¿Y qué plan tengo en ese auto?* | Ficha completa; ficha con el motivo; plan del auto del reclamo |
 | Memoria larga | Charla de 8 turnos: en el 1 se dice algo que no queda en ningún dato (*"pienso vender el Focus"*); en el 7 se pregunta por eso | En el turno 6 se resume; en el 7 lo recuerda |
 | Fotos | Granizo + *granizo sobre la AC456BD*; choque + *granizo sobre la AB123CD*; parabrisas + *granizo sobre la AC456BD*; choque + *¿Me cubre esto? Es el AD789EF*; solo la foto; visión caída | Cubierto; **Requiere peritaje**; Cubierto; denuncia y Cubierto; pide la patente; aviso al principio |
+| ReAct | `test_react_traza.py` (6 casos) y los 12 de §28 | La herramienta esperada en cada consulta, con su traza; ver §28 |
 
 **Costo:** la batería completa usa ~170.000 tokens, casi todo el cupo diario del
 modelo principal. Conviene correrla con el cupo recién renovado y registrar qué
@@ -1311,6 +1360,103 @@ principal.
 - **Fotos propias**, idealmente una donde se lea la patente (la comparación de
   patentes no se probó con una foto real).
 - **El recorrido completo en la web, de punta a punta**, con el modelo principal,
-  antes de grabar el video.
+  antes de la presentación (con el ReAct cambiaron los pasos 2, 3, 4 y 10).
+- **Los casos de §28 con el modelo principal**: la segunda vuelta la respondió
+  casi toda el de respaldo, porque el principal agotó su cupo.
+- **La batería completa (`test_casos.py`)** después del ReAct.
 - **La instalación desde cero en Linux** (en Windows se hizo el 25/09: ver la
   sección de instalación).
+
+
+---
+
+## 28. El agente ReAct: consultas con herramientas elegidas por el modelo
+
+Lo integró Nicolás (rama `integracion-react`, commits `d637ff4` y `bea309e`) y
+se completó al unirlo con `tp2` (`5a41204`).
+
+### Qué es
+
+**ReAct** (*Reasoning + Acting*) es el patrón del notebook de agentes de la
+cátedra: el modelo recibe una lista de herramientas con su descripción y, en
+un ciclo, **decide** cuál llamar y con qué datos, **lee** lo que devolvió y
+decide si necesita otra o ya puede responder. Se arma con `create_agent` de
+LangChain; cada herramienta es una función `@tool`, cuya descripción sale del
+docstring y cuyo esquema sale de los tipos.
+
+### Dos caminos
+
+| Mensaje | Camino | Por qué |
+|---|---|---|
+| Denuncia de un hecho (o pedido de auxilio) | **Fijo**: póliza → manual → dictamen → controles → registro → respuesta | Un dictamen tiene que seguir siempre los mismos pasos y pasar siempre por los controles de vigencia, pago, plazo y duplicados |
+| Consulta: póliza, DNI, reclamos, cuánto paga, preguntas sobre el manual | **ReAct**: el modelo elige entre 6 herramientas de lectura | No hay un orden fijo: cada pregunta necesita herramientas distintas |
+| Saludo o charla | Directo a responder | No necesita herramientas |
+| Un reclamo puntual ("¿en qué estado está mi reclamo?") | Ficha armada por el código | Siempre completa y sin gastar una llamada al modelo (§10, problema 29) |
+
+Al principio el ReAct atendía solo las preguntas generales y los DNI; las
+consultas con patente seguían por el camino fijo porque ahí se agregaban las
+exclusiones por GNC. Se pasaron también al ReAct para que llegaran a las
+herramientas nuevas (por ejemplo, *"¿cuánto pago si el arreglo sale
+800.000?"* tiene patente), y las exclusiones se movieron a la herramienta de
+búsqueda: si recibe la patente de un auto con GNC, las suma. El prompt le pide
+pasar la patente cuando la pregunta es sobre un auto en particular, y el nodo
+le recuerda los datos ya conocidos (patente, DNI, reclamo, foto). En la prueba,
+*"¿Y si me lo roban, me cubren?"* sobre el AF987XX aplicó la exclusión las dos
+veces.
+
+### Solo lectura
+
+El ReAct recibe `consultar_datos_poliza`, `consultar_polizas_por_dni`,
+`consultar_clausulas_poliza`, `consultar_estado_reclamo`, `listar_reclamos` y
+`calcular_pago_cliente`. **No recibe `registrar_siniestro`:** un reclamo solo se
+escribe en la base desde el nodo `registrar` del camino fijo, que corre
+después del dictamen y de los controles. Si el modelo pudiera registrar, podría
+hacerlo salteando la vigencia o el pago, o registrar el mismo hecho dos veces,
+y esas decisiones no quedarían auditadas por el código.
+
+`calcular_pago_cliente` sigue la misma idea que los controles: **la cuenta la
+hace el código** (el cliente paga hasta la franquicia; la aseguradora, el resto,
+con tope en la suma asegurada). El prompt le prohíbe al modelo hacer cuentas.
+
+### La traza ("🔍 Cómo llegué a esto")
+
+Debajo de cada respuesta de la web, tres pestañas: **Razonamiento** (qué
+herramientas decidió llamar el modelo, con qué datos, y el dictamen), 
+**Herramientas** (qué devolvió cada una) y **Fuentes** (los fragmentos del
+manual, con su sección, página y similitud coseno). Es la traza observable del
+notebook de agentes. En el camino fijo también quedan los pasos (póliza,
+cláusulas, dictamen, registro). Si un control del código cambió el dictamen
+del modelo, se muestran las dos cosas: *"El modelo había dicho Cubierto. Lo
+cambió un control del sistema: vigencia, pago y plazo de denuncia de la
+póliza"*.
+
+### Prueba: antes y después
+
+El 27/09, con 11 conversaciones (una por caso, algunas de varios turnos) y la
+tabla de reclamos vacía. "Antes" es la rama de Nicolás recién unida; "después",
+con los arreglos. La primera vuelta del "después" contestó el modelo
+principal; en la segunda (después de los arreglos de la respuesta y del límite
+de tokens) el principal agotó su cupo en el primer caso y contestó el de
+respaldo.
+
+| Caso | Antes | Después |
+|---|---|---|
+| *Me robaron el auto AJ222NP* (vencida) | Traza: "Cubierto". La respuesta pedía la denuncia policial y decía que el robo estaba cubierto: no mencionó el rechazo | Traza: "Rechazado (el modelo había dicho Cubierto)". La respuesta empieza con la ficha: Rechazado, con el motivo |
+| *Me chocaron de atrás con la AH111LM* (impaga) | Rechazado | Rechazado, con la ficha |
+| *Choqué con la AD789EF y mi acompañante se lastimó el brazo* | — | Alerta de lesionados arriba y la ficha. El modelo devolvió vacío dos veces: igual quedó la ficha |
+| *Me quedé sin batería con la AB123CD, necesito auxilio* | Consulta; respondió con los teléfonos de Asistencia 24 | 1.ª vuelta: `413 Request too large` (problema 39). 2.ª: el ReAct ofreció "registrar la denuncia", que no puede hacer. Se corrigió el clasificador: ahora es una denuncia (verificado solo el clasificador) |
+| *Se me rompió el motor en la ruta con la AC456BD, necesito una grúa* | "No reconocido": derivado a un asesor | Asistencia 24; reclamo "Derivado a Asistencia 24" |
+| *¿Qué cubre el granizo?* | ReAct → buscar en el manual | Igual |
+| *Mi DNI es 30555777* | ReAct → pólizas del DNI | 1.ª vuelta: preguntó "¿le gustaría ver sus pólizas?", sin herramienta. Con la regla nueva del prompt, las listó |
+| Choque y granizo en el AB123CD → *¿Qué reclamos tengo?* | Mostró solo el último reclamo | `listar_reclamos`: los dos. En la 1.ª vuelta la respuesta al granizo dio el número #53 y el reclamo era el #52 (problema 38) |
+| *¿Qué plan tengo…AB123CD?* → *Si arreglar la puerta sale 800.000 pesos, ¿cuánto pago yo?* | Se tomó como denuncia: "ese hecho ya está denunciado" | `calcular_pago_cliente`: $460.000 el cliente, $340.000 la aseguradora |
+| *¿Qué plan tengo…AF987XX?* → *¿Y cuándo vence?* | 01/06/2027 (camino fijo) | 01/06/2027 (ReAct con la patente recordada) |
+| *¿Qué plan tengo…AF987XX?* → *¿Y si me lo roban, me cubren?* | No: exclusión por GNC (camino fijo) | No: exclusión por GNC (ReAct, pasando la patente a la búsqueda) |
+
+`test_react_traza.py`: 4 de 4 antes; con los casos nuevos (póliza por patente,
+listar reclamos, cuánto paga), 6 de 6 en las dos vueltas. En su caso del
+granizo sobre el AF987XX (GNC) el dictamen salió *Rechazado* antes y
+*Cubierto* después: es el caso ambiguo que sigue pendiente (§13).
+
+**Costo:** una consulta por el ReAct usa ~2.000-5.000 tokens (la clasificación,
+la decisión y la respuesta); antes, por el camino fijo, ~4.000.

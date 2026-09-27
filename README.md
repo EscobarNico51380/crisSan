@@ -14,11 +14,18 @@ autos (San Cristóbal). El cliente escribe en lenguaje natural y el sistema:
 
 - responde dudas sobre el manual de la póliza, buscando las cláusulas
   relevantes (**RAG** sobre el PDF del manual);
-- consulta los datos de la póliza del cliente en una base de datos;
+- consulta los datos de la póliza del cliente en una base de datos, lista sus
+  reclamos y calcula cuánto paga de una reparación;
 - analiza un siniestro y **dictamina si está cubierto**, citando las cláusulas
   que lo fundamentan, y registra el reclamo;
 - mira la **foto** del daño, si el cliente la adjunta, y la usa como evidencia;
-- recuerda la conversación, así que entiende preguntas de seguimiento.
+- recuerda la conversación, así que entiende preguntas de seguimiento;
+- muestra, debajo de cada respuesta, **cómo llegó a ella**: qué herramientas
+  usó, con qué datos, y qué fragmentos del manual consultó.
+
+Las consultas las resuelve un **agente ReAct**, que elige por sí mismo qué
+herramienta usar; las denuncias siguen siempre los mismos pasos, con controles
+hechos por el código.
 
 Está construido con **LangChain** y **LangGraph**, y usa el modelo
 `gpt-oss-120b` a través de **Groq** (y `qwen3.8-27b` para mirar las fotos).
@@ -167,7 +174,13 @@ está pensado para probar una situación distinta.
 - **Para dictaminar un siniestro necesita saber de qué auto se habla.** Si la
   patente no está en el mensaje ni en la conversación, la pide.
 - **Cada denuncia queda registrada** como reclamo, con número, y se puede
-  consultar después.
+  consultar después (*"¿En qué estado está mi reclamo?"*, *"¿Qué reclamos
+  tengo?"*).
+- **Puede calcular cuánto paga el cliente** de una reparación cubierta, según
+  la franquicia de su póliza (*"Si arreglar la puerta sale 800.000 pesos,
+  ¿cuánto pago yo?"*).
+- **"🔍 Cómo llegué a esto"**, debajo de cada respuesta, muestra las
+  herramientas que usó, qué devolvieron y los fragmentos del manual.
 - **El botón "Reiniciar conversación"** de la barra lateral borra la memoria de
   la charla (y el contador de costo) y empieza una nueva. Los reclamos
   registrados se conservan.

@@ -4,16 +4,22 @@ Para el equipo y para cualquier asistente de IA que trabaje en este repositorio.
 El README es para quien **usa** el sistema; esta guía es para quien lo
 **modifica**. La arquitectura, las decisiones y las dificultades resueltas están
 en `DOCUMENTACION.md`; lo que falta hacer, en `PENDIENTES.md`. Para la defensa:
-`guia_presentacion.md` (slides y video) y `repaso_TP1.md`.
+`guia_presentacion.md` (slides y demo en vivo; no hay video) y `repaso_TP1.md`.
 
 ---
 
 ## Qué es
 
 San Cris: asistente de seguros de auto (TP2 de Inteligencia Artificial, UTN
-FRRO, comisión 502). Grafo de estado de LangGraph que clasifica el mensaje,
-consulta la póliza (SQLite), busca en el manual (RAG híbrido sobre Chroma),
-emite un dictamen de cobertura con el LLM, lo registra y responde.
+FRRO, comisión 502). Grafo de estado de LangGraph que clasifica el mensaje y
+toma uno de dos caminos:
+
+- **Denuncia → camino fijo:** consulta la póliza (SQLite), busca en el manual
+  (RAG híbrido sobre Chroma), emite un dictamen con el LLM, lo controla con
+  código, lo registra y responde.
+- **Consulta → subagente ReAct** (`create_agent`): el LLM elige entre 6
+  herramientas **de solo lectura** (`tools.HERRAMIENTAS_LECTURA`). Registrar un
+  reclamo nunca es una herramienta del modelo.
 
 ## Mapa de archivos
 
@@ -23,12 +29,13 @@ emite un dictamen de cobertura con el LLM, lo registra y responde.
 | `llm.py` | Único lugar donde se crean los modelos. Modelo principal, respaldo y disyuntor. **Toda llamada al LLM pasa por `llm.invocar`**. También el modelo de visión (`describir_foto`, `preparar_foto`) |
 | `rag.py` | Carga del PDF, chunking estructural, embeddings e5, Chroma y búsqueda híbrida (BM25 + semántica) |
 | `database.py` | Esquema SQLite, datos de prueba y consultas (siempre parametrizadas) |
-| `tools.py` | Las herramientas `@tool` que usa el grafo |
+| `tools.py` | Las herramientas `@tool`; `HERRAMIENTAS_LECTURA` es la lista que recibe el ReAct. También las exclusiones por GNC (`exclusiones_del_vehiculo`) |
 | `costos.py` | Tokens y costo estimado de cada turno |
 | `config.py` | Modelos, precios, rutas y parámetros (chunking, historial) |
 | `app.py` / `main.py` | Chat web (Streamlit) y chat por consola |
 | `iniciar.py` | Instalación y arranque con un solo comando (solo biblioteca estándar) |
 | `test_casos.py` | 52 casos que pasan por el agente completo (consume cupo) |
+| `test_react_traza.py` | 6 casos: que el ReAct elija la herramienta esperada y deje la traza (consume cupo) |
 | `ejemplos/fotos/` | Fotos de ejemplo (granizo, parabrisas, choque) con sus créditos |
 | `notebooks_clases/` | Notebooks de la cátedra pasados a `.py`, como referencia |
 
@@ -96,7 +103,7 @@ simulados. Ver ejemplos en `DOCUMENTACION.md`.
 **Con API:** las baterías que se usaron (6 preguntas del GNC, 7 de los autos de
 prueba, seguimiento, memoria) están descritas en `DOCUMENTACION.md`, con las
 preguntas literales y los resultados. Se corren en el momento con un script
-aparte; no se guardan scripts de prueba en el repo.
+aparte; en el repo quedan solo `test_casos.py` y `test_react_traza.py`.
 
 Antes de una batería, **vaciar la tabla `siniestros`**: los reclamos quedan como
 precedentes y sesgan los dictámenes siguientes.
@@ -134,6 +141,15 @@ precedentes y sesgan los dictámenes siguientes.
 - **Una tarea por llamada al LLM:** la comparación foto-relato falló como
   regla y como campo del dictamen, y funcionó como llamada aparte.
 - **Consola de Windows:** usar `PYTHONIOENCODING=utf-8` si fallan los acentos.
+- **Límite de 8.000 tokens por minuto (y por pedido) en el plan gratuito:** el
+  ReAct acumula en un mismo pedido lo que devuelve cada herramienta. Por eso la
+  búsqueda del ReAct devuelve 6 fragmentos (`FRAGMENTOS_REACT`). Si una
+  herramienta nueva devuelve mucho texto, acotarla.
+- **Herramientas nuevas para el ReAct: solo de lectura**, pocas, bien
+  descritas en el docstring (es lo que lee el modelo para elegir) y sin
+  superponerse. Las cuentas van en el código, no en el prompt.
+- **Lo que ve el cliente sobre un reclamo lo arma el código** (`formatear_reclamo`):
+  al redactarlo, el modelo llegó a dar un número de reclamo equivocado.
 
 ---
 
