@@ -287,6 +287,26 @@ TIPOS_SINIESTRO = (
     "No reconocido",           # centinela: sin cobertura en el manual
 )
 
+# Granizo y cristales/parabrisas en un auto con GNC: el manual es ambiguo. La
+# lista general de exclusiones (pág. 10) alcanza al GNC, pero con la salvedad
+# "excepto que la cobertura incluya alguno de los puntos enumerados"; las listas
+# que repiten la exclusión de forma tajante son las de Incendio (pág. 15) y
+# Robo o Hurto (pág. 16). Para granizo y cristales se fija "Requiere peritaje"
+# con un control del sistema, así la respuesta no depende del modelo (el chico
+# leía la lista general como absoluta y rechazaba). Sólo aplica cuando el
+# producto cubre esas prestaciones (manual, pág. 17, ítems 7, 8 y 10): C+, CM y D.
+PRODUCTOS_CON_GRANIZO_Y_CRISTALES = ("C+", "CM", "D")
+FAMILIAS_AMBIGUAS_CON_GNC = ("granizo", "cristales")
+
+
+def producto_cubre_granizo_o_cristales(producto: str) -> bool:
+    """Indica si ese producto cubre granizo y cristales/parabrisas (manual pág. 17).
+
+    Tolera variantes como "D c/fran" porque compara por prefijo.
+    """
+    p = (producto or "").strip().upper()
+    return any(p.startswith(c) for c in PRODUCTOS_CON_GRANIZO_Y_CRISTALES)
+
 
 class DictamenSiniestro(BaseModel):
     """Determinación de cobertura + datos del siniestro para registrar."""
@@ -457,7 +477,11 @@ PROMPT_DICTAMEN = (
     "las salvedades de su encabezado.\n"
     "6. Si hay FOTO DEL CLIENTE: usala como evidencia del daño; si no deja ver "
     "bien el daño, basate en el relato. La descripción es automática y puede "
-    "tener errores: no rechaces solo por ella.\n\n"
+    "tener errores: no rechaces solo por ella.\n"
+    "7. Si el vehículo tiene GNC y el siniestro es de granizo o de cristales/"
+    "parabrisas (una prestación que el producto cubre), la determinación es "
+    "'Requiere peritaje': el manual es ambiguo para esos casos (la exclusión por "
+    "GNC sólo se repite para incendio y robo).\n\n"
     "TIPOS DE SINIESTRO VÁLIDOS (tomados del manual): "
     + ", ".join(TIPOS_SINIESTRO)
     + ".\n"
@@ -515,6 +539,9 @@ PROMPT_REACT = (
     f"{CONTACTO_CONSULTAS} o, si quiere, consultar el estado de su reclamo.\n"
     "9. Español rioplatense (tratalo de vos), claro y directo. Sin muletillas "
     "iniciales.\n"
+    "10. Si el auto tiene GNC y preguntan por granizo o cristales/parabrisas, "
+    "decí que el manual es ambiguo para ese caso y que hace falta un peritaje: "
+    "no afirmes que está cubierto ni que fue rechazado.\n"
 )
 
 # Subagente ReAct: el LLM decide qué herramienta de lectura invocar. Se crea
@@ -931,6 +958,23 @@ def motivo_de_rechazo_administrativo(
     return None
 
 
+def _gnc_caso_ambiguo(
+    state: EstadoAgente, resultado: DictamenSiniestro, poliza: dict | None
+) -> bool:
+    """¿Es un caso ambiguo del manual: granizo o cristales en un auto con GNC?
+
+    Lo decide el sistema con datos de la base (el auto tiene GNC, el producto
+    cubre esa prestación), no el modelo, para no depender de su interpretación
+    del manual.
+    """
+    if not database.vehiculo_tiene_gnc(state.get("patente", "")):
+        return False
+    familia = database.familia_de_siniestro(resultado.tipo_siniestro)
+    if familia not in FAMILIAS_AMBIGUAS_CON_GNC:
+        return False
+    return producto_cubre_granizo_o_cristales((poliza or {}).get("producto", ""))
+
+
 def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     mensaje = state["messages"][-1].content
     # Acotamos los precedentes al MISMO producto que la póliza en cuestión: una
@@ -1020,12 +1064,21 @@ def nodo_emitir_dictamen(state: EstadoAgente) -> dict:
     determinacion = resultado.determinacion
     fundamento = resultado.fundamento
     control = ""  # qué control del sistema cambió lo que dijo el modelo
-    motivo = motivo_de_rechazo_administrativo(
-        database.obtener_vigencia(state.get("patente", "")), fecha_siniestro, hoy
-    )
+    poliza = database.obtener_vigencia(state.get("patente", ""))
+    motivo = motivo_de_rechazo_administrativo(poliza, fecha_siniestro, hoy)
     if motivo:
         determinacion, fundamento = "Rechazado", motivo
         control = "vigencia, pago y plazo de denuncia de la póliza"
+    elif _gnc_caso_ambiguo(state, resultado, poliza):
+        control = "exclusión por GNC en un caso ambiguo del manual"
+        determinacion = "Requiere peritaje"
+        fundamento = (
+            f"El vehículo tiene GNC y el siniestro es de "
+            f"{resultado.tipo_siniestro.lower()}. El manual no es concluyente "
+            "para esa cobertura: la lista general de exclusiones alcanza al GNC, "
+            "pero la exclusión sólo se repite para incendio y robo. Hace falta "
+            "un peritaje para determinar si corresponde la cobertura."
+        )
     elif comparacion and comparacion.coincide == "no":
         control = "comparación de la foto con el relato"
         # El modelo juzga si la foto y el relato cuentan lo mismo (es

@@ -619,15 +619,16 @@ def vehiculo_tiene_gnc(patente: str) -> bool:
 
 
 def obtener_vigencia(patente: str) -> dict | None:
-    """Devuelve las fechas de vigencia y el estado de pago de la póliza de una patente.
+    """Devuelve las fechas de vigencia, el estado de pago y el producto.
 
     Lo usa el agente para controlar, sin el LLM, que la póliza estuviera
-    vigente y paga en la fecha del siniestro.
+    vigente y paga en la fecha del siniestro, y para saber qué prestaciones
+    cubre el producto.
     """
     conn = get_conn()
     fila = conn.execute(
         """
-        SELECT numero_poliza, fecha_inicio, fecha_vencimiento, estado_pago
+        SELECT numero_poliza, fecha_inicio, fecha_vencimiento, estado_pago, producto
         FROM polizas
         WHERE patente = ?
         """,

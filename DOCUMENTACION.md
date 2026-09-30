@@ -290,6 +290,7 @@ se mantiene acotado con una ventana + resumen (§16).
 | 40 | "¿Qué reclamos tengo?" mostraba solo el último reclamo, y "¿cuánto pago si el arreglo sale 800.000?" se tomaba como una denuncia | El ruteo mandaba todo lo que dijera "reclamo" a la ficha del último, y el clasificador veía un daño | "Reclamos", en plural, va al ReAct (`listar_reclamos`); el clasificador toma como consulta las preguntas de cuánto paga (§28) |
 | 41 | Si el modelo devolvía una respuesta vacía, el cliente veía "¿Podrías reformular tu consulta?", aunque su reclamo ya estuviera registrado | `gpt-oss` a veces gasta la respuesta entera en razonar | Un reintento; y en una denuncia la ficha la arma el código, así que nunca queda vacía (§28) |
 | 42 | Al preguntar cómo avanzar o terminar un reclamo ("¿cómo puedo avanzar para terminar mi reclamo?"), el sistema repetía la ficha del reclamo una y otra vez, sin contestar la pregunta | La heurística del ruteo "menciona 'reclamo' + hay un reclamo en memoria" capturaba CUALQUIER mensaje con esa palabra y lo mandaba al nodo determinístico `consultar_reclamo`, que muestra la ficha sin pasar por el LLM. La pregunta de trámite/procedimiento no encajaba en ninguna intención, así que nunca llegaba a un prompt que pudiera admitir "no puedo responder" | La intención `general` ahora cubre también trámites/procedimientos; el ruteo evalúa `general` antes que la heurística de reclamo; y `PROMPT_REACT` ganó una regla de honestidad que deriva a un asesor al 0810-222-8887 en lugar de volcar la ficha |
+| 43 | El granizo y el parabrisas de un auto con GNC salían distinto según el modelo: el chico leía la lista general de exclusiones como absoluta y rechazaba | El manual es ambiguo para esos dos casos: la exclusión por GNC sólo se repite, tajante, para incendio (pág. 15) y robo o hurto (pág. 16), y la lista general (pág. 10) trae la salvedad *"excepto que la cobertura incluya alguno de los puntos enumerados"* | Decisión del grupo: **Requiere peritaje**. Lo fija un control del sistema (no el prompt): si el auto tiene GNC y el siniestro es granizo o cristales/parabrisas en un producto que los cubre (C+, CM, D), el dictamen pasa a *Requiere peritaje* aunque el modelo diga otra cosa (§14) |
 
 ---
 
@@ -355,8 +356,9 @@ La base SQLite y Chroma se generan solas en `data/` la primera vez.
   decide: su descripción pasa por la comparación con el relato (§26).
 - **Fotos:** solo en la web y una por mensaje.
 - **El plazo de denuncia** no contempla caso fortuito o fuerza mayor (§24).
-- **Granizo o parabrisas sobre un auto con GNC:** el manual es ambiguo y la
-  respuesta depende del modelo (§14, §19).
+- **Granizo o parabrisas sobre un auto con GNC:** el manual es ambiguo; el
+  sistema responde **Requiere peritaje** con un control del código, ya no
+  depende del modelo (§14).
 - Las exclusiones que dependen del vehículo solo contemplan el **GNC** (§14).
 - El modelado de GNC no distingue "declarado vs no declarado".
 - La tabla de límites (pág 5) a veces rankea alto (falso positivo menor).
@@ -407,6 +409,12 @@ incendio y robo, lo que sugiere que ahí está su alcance real. Para granizo y
 cristales el manual no es concluyente: tanto "Cubierto" como "Requiere
 peritaje" son defendibles.
 
+**Decisión del grupo.** Para granizo y cristales/parabrisas en un auto con GNC
+la respuesta es **Requiere peritaje**. No queda en manos del prompt: lo fija un
+control del sistema que, si el auto tiene GNC, el siniestro es de esa familia y
+el producto cubre la prestación (C+, CM, D), pasa el dictamen a *Requiere
+peritaje* aunque el modelo diga "Cubierto" o "Rechazado".
+
 > **Corrección.** En la primera versión de esta batería el incendio figuraba
 > como esperado "Cubierto" y, por lo tanto, como caso correcto. Releyendo el
 > manual, la lista *"Exclusiones a la cobertura para Incendio"* de pág. 15
@@ -455,7 +463,10 @@ queda claro qué es el relato y qué son las exclusiones.
 
 **Resultado.** 6 de 6. El robo y el incendio pasaron a *Rechazado*. El granizo
 y el parabrisas siguen *Cubierto* aunque ahora el modelo **ve** las
-exclusiones: las lee y entiende que no aplican a esas coberturas.
+exclusiones: las lee y entiende que no aplican a esas coberturas. **Más
+adelante** el grupo decidió que esos dos casos ambiguos deben dar *Requiere
+peritaje*, y lo fija un control del código (ver *Decisión del grupo* más
+arriba), así ya no depende de la interpretación del modelo.
 
 **Costo.** Una búsqueda extra, local (no consume API), y solo para vehículos
 con GNC.
@@ -466,9 +477,10 @@ con GNC.
   manual también excluye vehículos adaptados a gas licuado de petróleo, pero la
   base de datos no registra ese dato. Otra característica se sumaría con el
   mismo mecanismo: su consulta, sus palabras clave y el dato en la base.
-- En los casos ambiguos (granizo, cristales) el sistema hoy responde "Cubierto".
-  Si el grupo decide que lo correcto es "Requiere peritaje", hay que ajustar el
-  prompt del dictamen.
+- En los casos ambiguos (granizo, cristales) el sistema responde **"Requiere
+  peritaje"**, fijado por un control del código (no por el prompt): así no
+  depende de que el modelo interprete bien la salvedad. Aplica sólo cuando el
+  producto cubre la prestación (C+, CM, D).
 
 
 ---
@@ -741,12 +753,12 @@ dentro del script de prueba. Antes de cada batería se vació la tabla
 
 - **El modelo chico es un respaldo viable:** coincide con el grande en todos
   los casos claros.
-- **Donde el manual es ambiguo, la respuesta depende del modelo.** Ante el
+- **Donde el manual es ambiguo, la respuesta dependía del modelo.** Ante el
   granizo sobre un auto con GNC, el modelo chico leyó la lista general de
   exclusiones al pie de la letra (*"una exclusión general que excluye cualquier
   siniestro cuando el vehículo está adaptado…"*) e ignoró la salvedad del
-  "excepto". Mientras el grupo no decida qué respuesta es la correcta y la
-  escriba como regla, el resultado no es estable.
+  "excepto". **Ya resuelto:** el grupo decidió que la respuesta es *Requiere
+  peritaje* y un control del código la fija, sin depender del modelo (§14).
 - **La póliza vencida sale cubierta.** No es un problema del modelo chico sino
   del sistema: el reclamo se registró con la fecha de hoy (el modelo la conoce)
   y la póliza tenía el vencimiento a la vista, pero el prompt del dictamen no
@@ -1280,9 +1292,10 @@ Tres observaciones:
   *"Disculpá, no pude armar una respuesta en este momento. ¿Podrías reformular
   tu consulta?"* aunque su reclamo quedó registrado. Si reenvía el mensaje, el
   control de duplicados le muestra el reclamo, así que no se duplica.
-- **El GNC con cristales o granizo sigue dependiendo del modelo**: el respaldo
-  dio *Rechazado* y *Cubierto* para el mismo parabrisas. Es el caso ambiguo que
-  falta decidir.
+- **El GNC con cristales o granizo quedó fijado**: el respaldo daba *Rechazado*
+  y *Cubierto* para el mismo parabrisas. Ahora, si el auto tiene GNC y el
+  siniestro es granizo o cristales/parabrisas en C+/CM/D, el control del sistema
+  pone *Requiere peritaje*, sin depender del modelo (§14).
 - **La foto del parabrisas, de muy cerca**, se describe como *"no se distingue
   el vehículo"*: el modelo de visión no afirma lo que no ve, y el dictamen se
   apoya en el relato, que es lo esperado.
@@ -1298,8 +1311,9 @@ tipo con palabras variables ("Robo Total", "Hurto del vehículo").
 
 ### Pendiente
 
-- Probar con el **modelo principal** el choque con relato de granizo y el
-  parabrisas del auto con GNC (en la prueba del 25/09 respondió el respaldo).
+- Probar con el **modelo principal** el choque con relato de granizo (en la
+  prueba del 25/09 respondió el respaldo) y volver a probar el parabrisas del
+  auto con GNC, ahora que el dictamen lo fija un control del sistema.
 - Probar con **fotos propias** del grupo.
 - La comparación de la **patente de la foto** no se probó con una foto real:
   ninguna de las de ejemplo muestra la patente.
@@ -1341,7 +1355,7 @@ varios turnos.
 | Consulta y memoria | *¿Qué plan tengo para la patente AB123CD?* → *¿Y cuándo vence?* | Plan D; "01/01/2027", clasificado como consulta |
 | Seguimiento | *¿Qué plan tengo para la patente AF987XX?* → *y me cubre el granizo?* | Pregunta reescrita con la patente; cita la cláusula del granizo |
 | Hipótesis | *Choqué contra un poste con la AF987XX* → *y si hubiera sido granizo?* | La segunda no registra reclamo |
-| GNC | Granizo, parabrisas, incendio y robo del AF987XX; granizo y robo del AB123CD | Cubierto (o peritaje), Cubierto, **Rechazado**, **Rechazado**, Cubierto, Cubierto |
+| GNC | Granizo, parabrisas, incendio y robo del AF987XX; granizo y robo del AB123CD | **Requiere peritaje**, **Requiere peritaje**, **Rechazado**, **Rechazado**, Cubierto, Cubierto |
 | Autos de prueba | Robo AC456BD; robo AD789EF; choque AE321GH; robo y choque AG654JK; robo AH111LM; robo AJ222NP | Cubierto; **Rechazado** (GNC); Rechazado (plan A); Cubierto y Rechazado (plan B); Rechazado (impaga); Rechazado (vencida) |
 | Plazo de denuncia | *Me robaron el auto AJ222NP el 10 de mayo de 2026*, dos veces | Rechazado por plazo; la segunda, "ya está denunciado" sin reclamo nuevo |
 | Reclamo | *¿En qué estado está mi reclamo #N?* → *¿Y por qué me lo aprobaron?* → *¿Y qué plan tengo en ese auto?* | Ficha completa; ficha con el motivo; plan del auto del reclamo |
@@ -1358,7 +1372,8 @@ principal.
 
 - **Dos casos con foto, con el modelo principal**: el choque con relato de
   granizo y el parabrisas del auto con GNC (el resto ya se probó con el
-  principal).
+  principal). El parabrisas GNC ahora da *Requiere peritaje* por control del
+  sistema: la prueba es confirmar el fundamento y la respuesta.
 - **Fotos propias**, idealmente una donde se lea la patente (la comparación de
   patentes no se probó con una foto real).
 - **El recorrido completo en la web, de punta a punta**, con el modelo principal,

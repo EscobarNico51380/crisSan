@@ -154,7 +154,7 @@ está pensado para probar una situación distinta.
 | Patente | Auto | Titular (DNI) | Póliza | Qué prueba |
 |---|---|---|---|---|
 | AB123CD | Ford Focus 2024 | Carlos Perez (39123456) | Todo riesgo, franquicia fija de $460.000 | Cubre casi todo |
-| AF987XX | Peugeot 208 2012, con GNC | Carlos Perez (39123456) | C+ (terceros completos) | Exclusiones por GNC: robo e incendio |
+| AF987XX | Peugeot 208 2012, con GNC | Carlos Perez (39123456) | C+ (terceros completos) | Exclusiones por GNC: robo e incendio; granizo y cristales, peritaje |
 | AC456BD | VW Gol Trend 2018 | Laura Gomez (30555777) | C+, sin GNC | El mismo plan que el anterior, sin GNC |
 | AD789EF | Chevrolet Cruze 2022, con GNC | Laura Gomez (30555777) | Todo riesgo | La exclusión por GNC se aplica aun con el mejor plan |
 | AE321GH | Fiat Uno 2008 | Laura Gomez (30555777) | Plan A (solo daños a terceros) | No cubre daños al propio auto |

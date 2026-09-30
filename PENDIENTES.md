@@ -78,17 +78,17 @@ el agente ReAct y las imágenes se apoyan en eso.
 
 ## Por decidir
 
-- **Granizo o parabrisas en un auto con GNC.** El manual es ambiguo: la lista
-  general de exclusiones incluye el GNC, pero con la salvedad "excepto que la
-  cobertura incluya alguno de los puntos enumerados". Hoy el sistema responde
-  "Cubierto"; la otra lectura defendible es "Requiere peritaje". Tiene que
-  coincidir con lo que se diga en la defensa. **Además hay que escribirlo como
-  regla en el prompt:** con el modelo chico el mismo caso sale "Rechazado", así
-  que hoy la respuesta depende del modelo.
-  **Decisión provisoria:** queda documentado y se retoma más adelante. Si leyendo
-  la póliza entera no se puede resolver, la respuesta será "Requiere peritaje".
-  En la prueba de fotos del 25/09 el modelo de respaldo dio *Rechazado* y
-  *Cubierto* para el mismo parabrisas del AF987XX: otra razón para fijarlo.
+- **Granizo o parabrisas en un auto con GNC: RESUELTO.** El manual es ambiguo:
+  la lista general de exclusiones (pág. 10) incluye el GNC pero con la salvedad
+  *"excepto que la cobertura incluya alguno de los puntos enumerados"*, y las
+  listas de pág. 15 y 16 repiten la exclusión sólo para incendio y robo.
+  **Decisión del grupo: "Requiere peritaje".** No queda en el prompt: lo fija un
+  control del sistema en `agent.nodo_emitir_dictamen` (con
+  `database.vehiculo_tiene_gnc` y el producto de la póliza). Si el auto tiene GNC
+  y el siniestro es granizo o cristales/parabrisas en un producto que los cubre
+  (C+, CM, D), el dictamen pasa a *Requiere peritaje* aunque el modelo diga
+  "Cubierto" o "Rechazado". Antes, con el modelo chico, el mismo caso salía
+  "Rechazado": ya no depende del modelo. Ver `DOCUMENTACION.md` §14.
 
 ## Entregables
 
