@@ -71,7 +71,7 @@ el agente ReAct y las imágenes se apoyan en eso.
 | Exclusiones por gas licuado (GLP) y por uso para transporte de pasajeros | ⏳ A confirmar | El manual las tiene; se sumarían con el mismo mecanismo que el GNC |
 | Historial que sobreviva al cerrar la app (`SqliteSaver`) | ⏳ Baja prioridad | Suma una dependencia |
 | Pruebas de las herramientas sin usar el LLM | ⏳ Baja prioridad | Como las del notebook de agentes; hoy `test_casos.py` pasa siempre por el LLM |
-| Límite de recursión en cada consulta (`recursion_limit`) | ⏳ Baja prioridad | El ReAct usa el de LangGraph por defecto (25 pasos); en las pruebas nunca pasó de 2 herramientas |
+| Límite de recursión en cada consulta (`recursion_limit`) | ⏳ Baja prioridad | El ReAct usa el de LangGraph por defecto, que en la versión instalada es 10.007 pasos: en la práctica, sin tope. En las pruebas nunca pasó de 2 herramientas. El notebook de agentes de la cátedra usa 12 |
 | Cambiar `MemorySaver` por `InMemorySaver` | ⏳ Baja prioridad | Nombre moderno de lo mismo |
 | Ajustar el tamaño y el solapamiento de los fragmentos del manual | ⏳ Baja prioridad | Cualquier cambio obliga a repetir la prueba del GNC |
 | Demo mínima de LCEL (`prompt \| modelo \| parser`) | ⏳ Opcional | La enseña el notebook de RAG; el sistema no la necesita |
@@ -94,9 +94,9 @@ el agente ReAct y las imágenes se apoyan en eso.
 
 | Entregable | Estado |
 |---|---|
-| Slides de la presentación (PowerPoint) | 🔶 `guia_presentacion.md` tiene el contenido de cada slide, lo que se dice, el grafo actualizado con el ReAct y el pedido para generarlas. Falta generarlas |
-| Mostrar el grafo coloreado según quién decide cada paso (código, RAG o LLM), con el recorrido de una consulta y los tres errores de ejemplo | 🔶 El `mermaid` está actualizado con el ReAct (en `DOCUMENTACION.md` y en la guía). Falta exportar la imagen |
-| Demo en vivo | 🔶 Pasos, qué decir y lista de antes de presentar en `guia_presentacion.md`. Falta repartir quién habla y ensayarla |
+| Slides de la presentación (PowerPoint) | ✅ La de Gemini (`Presentacion alternativa - hecha con Gemini.pdf`, 10 diapositivas), con el guion por integrante y la lista de cambios a hacerle en `guion_defensa_San_Cris_Gemini.md` (fuera del repo) |
+| Mostrar el grafo coloreado según quién decide cada paso (código, RAG o LLM), con el recorrido de una consulta y los tres errores de ejemplo | ✅ `grafo.png`: horizontal, fondo blanco, con la leyenda de colores (fuente en `grafo.mmd`). `grafo2.png` es otra versión, con fondo oscuro y sin leyenda |
+| Demo en vivo | 🔶 Pruebas, qué señalar en la pantalla y qué decir en el guion; reparto de quién habla hecho. Falta ensayarla |
 | Vaciar la tabla de siniestros antes de presentar (las pruebas quedan como precedentes) | ⏳ |
 | Repaso del TP1 | 🔶 `repaso_TP1.md`: preguntas probables con respuesta, los conceptos de la cátedra y dos inconsistencias del notebook para tener preparadas. Falta que lo lea el grupo y que cada uno sume lo suyo si su TP1 fue distinto |
 
@@ -106,7 +106,8 @@ el agente ReAct y las imágenes se apoyan en eso.
 |---|---|
 | `README.md` con los integrantes, y `iniciar.py`: instala y abre el chat con un solo comando | ✅ | `d291f74` |
 | Reorganizar la documentación: se borra `ONBOARDING.md` (lo cubre el README) y `SETUP.md` pasa a ser `AGENTS.md`, la guía interna para el equipo y para asistentes de IA (`CLAUDE.md` la importa) | ✅ | `3085cb5` |
-| Armar el zip de la entrega: sin `.venv` ni `data/modelos`, sin los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`, `repaso_TP1.md`, `guia_presentacion.md`), con el índice ya armado y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). Aclarar en el README que la key está incluida | ⏳ |
+| Limpiar la documentación que se entrega: sin hashes de commits ni ramas, los pendientes internos pasados a limitaciones ("Lo que no se probó"), la póliza vencida del modelo chico contada en pasado, el paso 9 del recorrido corregido (el modelo dictamina y el control lo corrige) y el comentario de `.streamlit/config.toml` sin mencionar un video | ✅ |
+| Armar el zip de la entrega. **Va:** `README.md`, `DOCUMENTACION.md`, los `.py` (incluidas las dos pruebas), `requirements*.txt`, el PDF del manual, `ejemplos/`, `.streamlit/`, `.env.example`, `grafo.png` y el `.env` con una key de Groq de una cuenta nueva dedicada a la entrega (1-2 meses de vida, revocarla después). **No va:** `.git`, `.venv`, `__pycache__`, `data/` completa (`iniciar.py` arma la base limpia y el índice; así lo probó la instalación desde cero), los documentos internos (`AGENTS.md`, `CLAUDE.md`, `PENDIENTES.md`, `repaso_TP1.md`, `guia_presentacion.md`, `IdeaTP.md`), el enunciado, `notebooks_clases/`, `grafo.mmd`, `grafo2.png` y el PDF de la presentación. Comprimir con `tar -a` y no con `Compress-Archive` (el de PowerShell 5.1 guarda rutas con `\` y se rompen en Linux). El README ya aclara que, si viene el `.env`, no hay que hacer nada | ⏳ |
 | Prueba previa del grupo: clonar el repo en una carpeta nueva e instalar con `python iniciar.py`, en Windows y en Linux (Nicolás), y reportar sistema, versión de Python, tiempo y errores | ⏳ Windows ✅ el 25/09 (10 minutos, sin errores; ver `DOCUMENTACION.md`). Falta Linux |
 | Probar la instalación desde cero con el zip, siguiendo solo el README, en Windows y en Linux | ⏳ |
 
