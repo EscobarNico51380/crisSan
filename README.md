@@ -117,7 +117,7 @@ muestra. También se puede escribir cualquier consulta en el chat.
 | 6 | ¿En qué estado está mi reclamo? | Consulta el reclamo recién registrado |
 | 7 | Me robaron el auto AC456BD | Robo con plan C+ y sin GNC: cubierto |
 | 8 | Me robaron el auto AF987XX | El mismo robo y el mismo plan, pero con GNC: rechazado por una exclusión del manual |
-| 9 | Me robaron el auto AJ222NP | Póliza vencida: la rechaza un control del sistema, sin el modelo de lenguaje |
+| 9 | Me robaron el auto AJ222NP | Póliza vencida: aunque el modelo de lenguaje diga "Cubierto", la rechaza un control del código |
 | 10 | Mi DNI es 30555777 | Busca por DNI y lista las pólizas de la titular |
 | 11 | Me cayó granizo sobre la AC456BD 📷 | Con foto de granizo: el modelo de visión describe el daño y coincide con el relato |
 | 12 | Me cayó granizo sobre la AB123CD 📷 | Con la foto de un choque frontal: no coincide con el relato, así que pide peritaje |

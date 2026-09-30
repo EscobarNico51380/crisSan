@@ -1,6 +1,6 @@
-# Config de Streamlit para la demo/video.
+# Config de Streamlit para el chat.
 # toolbarMode = "minimal" oculta el boton Deploy y las opciones de desarrollo,
-# dejando la interfaz limpia para grabar.
+# dejando la interfaz limpia.
 [client]
 toolbarMode = "minimal"
 
