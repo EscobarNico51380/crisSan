@@ -1,0 +1,53 @@
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Arial", "fontSize": "18px", "lineColor": "#555555"}, "flowchart": {"nodeSpacing": 22, "rankSpacing": 45, "curve": "basis", "padding": 10}}}%%
+graph LR
+    analizar_foto["<b>Mensaje del cliente</b><br/>───────<br/><b>analizar_foto</b><br/>Visión: describe<br/>la foto, si hay"]:::llm --> clasificar
+    clasificar["<b>clasificar</b><br/>LLM: intención<br/>Código: patente,<br/>DNI, reclamo"]:::mixto
+
+    subgraph REACT["CONSULTAS → agente ReAct: el modelo elige la herramienta"]
+        direction LR
+        agente_react["<b>agente_react</b><br/>LLM: decide qué<br/>herramienta llamar,<br/>lee el resultado<br/>y responde"]:::llm
+        t1["consultar_datos_poliza"]:::codigo
+        t2["consultar_polizas_por_dni"]:::codigo
+        t3["consultar_clausulas_poliza"]:::rag
+        t4["consultar_estado_reclamo"]:::codigo
+        t5["listar_reclamos"]:::codigo
+        t6["calcular_pago_cliente"]:::codigo
+        agente_react -.- t1 & t2 & t3 & t4 & t5 & t6
+    end
+
+    subgraph FIJO["DENUNCIAS → camino fijo: siempre los mismos pasos"]
+        direction LR
+        consultar_poliza["<b>consultar_poliza</b><br/>Código: SQL"]:::codigo
+        consultar_clausulas["<b>consultar_clausulas</b><br/>RAG: manual +<br/>exclusiones GNC"]:::rag
+        emitir_dictamen["<b>emitir_dictamen</b><br/>LLM: ¿lo cubre?<br/>Código: vigencia,<br/>pago, plazo,<br/>duplicados"]:::mixto
+        registrar["<b>registrar</b><br/>Código: guarda<br/>el reclamo"]:::codigo
+        derivar_humano["<b>derivar_humano</b><br/>Código: asesor"]:::codigo
+        consultar_poliza --> consultar_clausulas --> emitir_dictamen
+        emitir_dictamen -. hecho nuevo .-> registrar
+        emitir_dictamen -. no está<br/>en el manual .-> derivar_humano
+    end
+
+    responder["<b>responder</b><br/>Código: ficha<br/>LLM: redacta"]:::mixto
+    consultar_reclamo["<b>consultar_reclamo</b><br/>Código: ficha<br/>del reclamo"]:::codigo
+    pedir_patente["<b>pedir_patente</b><br/>Código: mensaje fijo"]:::codigo
+    compactar["<b>compactar</b><br/>LLM: resume si la<br/>charla es larga<br/>───────<br/><b>Respuesta</b>"]:::llm
+
+    clasificar -. consulta o<br/>pregunta general .-> agente_react
+    clasificar -. denuncia .-> consultar_poliza
+    clasificar -. menciona<br/>un reclamo .-> consultar_reclamo
+    clasificar -. denuncia<br/>sin patente .-> pedir_patente
+    clasificar -. charla .-> responder
+    emitir_dictamen -. ya estaba<br/>denunciado .-> consultar_reclamo
+    registrar --> responder
+    agente_react --> compactar
+    responder --> compactar
+    consultar_reclamo --> compactar
+    derivar_humano --> compactar
+    pedir_patente --> compactar
+
+    classDef codigo fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px,color:#000
+    classDef rag fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#000
+    classDef llm fill:#f3e8ff,stroke:#7e22ce,stroke-width:2px,color:#000
+    classDef mixto fill:#fef3c7,stroke:#b45309,stroke-width:2px,color:#000
+    style FIJO fill:#f8fafc,stroke:#94a3b8
+    style REACT fill:#fffbeb,stroke:#d97706

@@ -421,7 +421,7 @@ peritaje* aunque el modelo diga "Cubierto" o "Rechazado".
 > incluye el GNC: lo correcto es **Rechazado**. Era un segundo falso positivo,
 > con la misma causa que el robo.
 
-### Etapa 1 — Los fragmentos perdían su encabezado (commit `148f605`)
+### Etapa 1 — Los fragmentos perdían su encabezado
 
 **Causa.** El chunking partía el manual por ítems numerados, y cada ítem
 quedaba sin el título que le da alcance. El fragmento recuperado decía solo
@@ -759,11 +759,12 @@ dentro del script de prueba. Antes de cada batería se vació la tabla
   siniestro cuando el vehículo está adaptado…"*) e ignoró la salvedad del
   "excepto". **Ya resuelto:** el grupo decidió que la respuesta es *Requiere
   peritaje* y un control del código la fija, sin depender del modelo (§14).
-- **La póliza vencida sale cubierta.** No es un problema del modelo chico sino
+- **La póliza vencida salía cubierta.** No era un problema del modelo chico sino
   del sistema: el reclamo se registró con la fecha de hoy (el modelo la conoce)
   y la póliza tenía el vencimiento a la vista, pero el prompt del dictamen no
-  tiene ninguna regla sobre la vigencia, y el modelo no las comparó. En el
-  fundamento escribió *"la póliza está al día"*, que se refiere al pago.
+  tenía ninguna regla sobre la vigencia, y el modelo no las comparó. En el
+  fundamento escribió *"la póliza está al día"*, que se refiere al pago. Se
+  corrigió pasando ese control al código (§21).
 
 
 ---
@@ -901,7 +902,7 @@ cualquier otra consulta.
 | 6 | *¿En qué estado está mi reclamo?* | Consulta el reclamo recién registrado |
 | 7 | *Me robaron el auto AC456BD* | Robo con plan C+ sin GNC: cubierto |
 | 8 | *Me robaron el auto AF987XX* | Mismo robo y mismo plan, con GNC: rechazado por una exclusión del manual |
-| 9 | *Me robaron el auto AJ222NP* | Póliza vencida: la rechaza un control del sistema, sin el LLM |
+| 9 | *Me robaron el auto AJ222NP* | Póliza vencida: aunque el LLM diga "Cubierto", la rechaza un control del código (la traza muestra las dos cosas) |
 | 10 | *Mi DNI es 30555777* | Busca por DNI y lista las pólizas |
 | 11 | *Me cayó granizo sobre la AC456BD* 📷 | Con foto de granizo: el modelo de visión describe el daño y coincide con el relato |
 | 12 | *Me cayó granizo sobre la AB123CD* 📷 | Con la foto de un choque frontal: no coincide con el relato, así que pide peritaje |
@@ -975,7 +976,7 @@ En la prueba desde cero la terminal muestra tres avisos que no son errores pero
 lo parecen: que hay una versión nueva de pip, que las descargas de Hugging Face
 no usan token, y (dos veces) que Windows no permite *symlinks* en la caché de
 modelos. Quedaron aclarados en el README y en el mensaje inicial de
-`iniciar.py`; apagarlos del todo es un pendiente.
+`iniciar.py`, pero no se apagaron.
 
 Falta la prueba desde cero en Linux.
 
@@ -1309,12 +1310,14 @@ control compara también la **familia del tipo de siniestro** (robo, incendio,
 granizo, cristales, choque), con una tabla de palabras clave: el LLM escribe el
 tipo con palabras variables ("Robo Total", "Hurto del vehículo").
 
-### Pendiente
+### Lo que no se probó
 
-- Probar con el **modelo principal** el choque con relato de granizo (en la
-  prueba del 25/09 respondió el respaldo) y volver a probar el parabrisas del
-  auto con GNC, ahora que el dictamen lo fija un control del sistema.
-- Probar con **fotos propias** del grupo.
+- El **parabrisas del auto con GNC** se probó solo con el modelo de respaldo y
+  el choque con relato de granizo, con los dos modelos mezclados (el principal
+  se agotó en medio del caso). Falta probar los dos con el **modelo principal**
+  (el parabrisas, ahora que el dictamen lo fija un control del sistema).
+- Se usaron solo las tres **fotos de ejemplo**: falta sumar **fotos propias**
+  del grupo.
 - La comparación de la **patente de la foto** no se probó con una foto real:
   ninguna de las de ejemplo muestra la patente.
 
@@ -1368,29 +1371,30 @@ modelo principal. Conviene correrla con el cupo recién renovado y registrar qu�
 modelo contestó cada caso: si entra el respaldo, ese resultado no vale para el
 principal.
 
-### Pruebas que faltan
+### Lo que no se probó
 
-- **Dos casos con foto, con el modelo principal**: el choque con relato de
-  granizo y el parabrisas del auto con GNC (el resto ya se probó con el
+- **Dos casos con foto, con el modelo principal** (§26): el choque con relato
+  de granizo y el parabrisas del auto con GNC (el resto ya se probó con el
   principal). El parabrisas GNC ahora da *Requiere peritaje* por control del
   sistema: la prueba es confirmar el fundamento y la respuesta.
-- **Fotos propias**, idealmente una donde se lea la patente (la comparación de
-  patentes no se probó con una foto real).
+- **Fotos propias**, en particular una donde se lea la patente: la comparación
+  de patentes no se probó con una foto real.
 - **El recorrido completo en la web, de punta a punta**, con el modelo principal,
   antes de la presentación (con el ReAct cambiaron los pasos 2, 3, 4 y 10).
 - **Los casos de §28 con el modelo principal**: la segunda vuelta la respondió
   casi toda el de respaldo, porque el principal agotó su cupo.
-- **La batería completa (`test_casos.py`)** después del ReAct.
-- **La instalación desde cero en Linux** (en Windows se hizo el 25/09: ver la
-  sección de instalación).
+- **La batería completa (`test_casos.py`) después de integrar el ReAct**: se
+  corrió antes (§24); después se probaron los casos de §28.
+- **La instalación desde cero en Linux**: se probó en Windows (§23).
 
 
 ---
 
 ## 28. El agente ReAct: consultas con herramientas elegidas por el modelo
 
-Lo integró Nicolás (rama `integracion-react`, commits `d637ff4` y `bea309e`) y
-se completó al unirlo con `tp2` (`5a41204`).
+Lo integró Nicolás Escobar. Después se le sumaron dos herramientas (listar los
+reclamos y calcular cuánto paga el cliente) y los arreglos que se cuentan en la
+prueba de abajo.
 
 ### Qué es
 
@@ -1450,8 +1454,8 @@ póliza"*.
 ### Prueba: antes y después
 
 El 27/09, con 11 conversaciones (una por caso, algunas de varios turnos) y la
-tabla de reclamos vacía. "Antes" es la rama de Nicolás recién unida; "después",
-con los arreglos. La primera vuelta del "después" contestó el modelo
+tabla de reclamos vacía. "Antes" es el ReAct recién integrado; "después", con
+los arreglos. La primera vuelta del "después" contestó el modelo
 principal; en la segunda (después de los arreglos de la respuesta y del límite
 de tokens) el principal agotó su cupo en el primer caso y contestó el de
 respaldo.
@@ -1473,7 +1477,7 @@ respaldo.
 `test_react_traza.py`: 4 de 4 antes; con los casos nuevos (póliza por patente,
 listar reclamos, cuánto paga), 6 de 6 en las dos vueltas. En su caso del
 granizo sobre el AF987XX (GNC) el dictamen salió *Rechazado* antes y
-*Cubierto* después: es el caso ambiguo que sigue pendiente (§13).
+*Cubierto* después: es el caso ambiguo descrito en las limitaciones (§13).
 
 **Costo:** una consulta por el ReAct usa ~2.000-5.000 tokens (la clasificación,
 la decisión y la respuesta); antes, por el camino fijo, ~4.000.
