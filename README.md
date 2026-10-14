@@ -1,5 +1,7 @@
 # San Cris — Asistente de seguros con RAG y agentes
 
+Prototipo disponible en: https://sancris.streamlit.app/
+
 **Trabajo Práctico N°2 — Inteligencia Artificial**
 UTN Facultad Regional Rosario · Comisión 502
 
