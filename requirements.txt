@@ -10,7 +10,8 @@ sentence-transformers
 pypdf
 python-dotenv
 rank-bm25
-streamlit
+# Pineada a proposito: sin pin, Streamlit Cloud la auto-actualiza y puede romper el prototipo.
+streamlit==1.64.0
 
 # Solo Linux: alli torch se instala con soporte CUDA y hace falta torchvision
 # (Windows funciona sin el). pip saltea esta linea en otros sistemas.
