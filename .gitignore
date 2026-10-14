@@ -1,0 +1,30 @@
+# Secretos — NUNCA commitear
+.env
+.env.*
+!.env.example
+
+# Entorno virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Datos generados (se recrean con los scripts)
+data/
+*.db
+*.db-journal
+chroma_db/
+polizas_pdfs/
+evidencias_imagenes/
+
+# Notebooks / IDE
+.ipynb_checkpoints/
+.idea/
+.vscode/
+
+# Tooling de asistentes (registro de skills; no es codigo del TP)
+.atl/
+.agents/

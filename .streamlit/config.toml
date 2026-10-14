@@ -1,0 +1,8 @@
+# Config de Streamlit para el chat.
+# toolbarMode = "minimal" oculta el boton Deploy y las opciones de desarrollo,
+# dejando la interfaz limpia.
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

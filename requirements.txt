@@ -1,0 +1,17 @@
+langchain
+langchain-classic
+langchain-community
+langchain-groq
+langgraph
+langchain-huggingface
+langchain-text-splitters
+chromadb
+sentence-transformers
+pypdf
+python-dotenv
+rank-bm25
+streamlit
+
+# Solo Linux: alli torch se instala con soporte CUDA y hace falta torchvision
+# (Windows funciona sin el). pip saltea esta linea en otros sistemas.
+torchvision; sys_platform == "linux"
